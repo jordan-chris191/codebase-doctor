@@ -12,8 +12,8 @@ Status: **COMPLETE** (verified)
 
 - Phases 1A (Foundation) and 1B (Repository Discovery) are **COMPLETE** and
   verified.
-- The repository is **not** a Git repository (no `.git`); the scanner
-  detects and reports this correctly.
+- The repository is a Git repository on branch `master`, pushed to
+  `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
 - The next phase (1C) has **not** started.
 

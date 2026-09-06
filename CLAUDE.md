@@ -96,8 +96,8 @@ Stable project facts useful to future Claude sessions:
 - **Runtime deps:** `commander` (CLI), `ignore` (gitignore semantics).
 - **Source layout:** `src/types` (domain model), `src/scanner` (discovery),
   `src/analyzers` (language parsing interfaces), `src/utils`, `src/cli.ts`.
-- **Repository is NOT currently a Git repository** (no `.git`); the scanner
-  itself detects and reports this.
+- **The repository is a Git repository**, on branch `master`, with
+  `origin` at `https://github.com/jordan-chris191/codebase-doctor.git`.
 - Phases 1A (Foundation) and 1B (Repository Discovery) are COMPLETE. The
   next phase is 1C (TypeScript/JavaScript Analysis) — not yet started.
 

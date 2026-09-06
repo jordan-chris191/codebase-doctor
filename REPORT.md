@@ -287,8 +287,9 @@ Phase 1C (see §10).
   forward-declared but not yet produced; `get_architecture`-style
   aggregation is future work.
 - **Coverage unverified.** 80% thresholds configured but not validated.
-- **Not a Git repository.** The project itself has no `.git`; the scanner
-  correctly reports `isGitRepository: false`.
+- **Git history not yet analyzed.** The scanner detects whether `.git` is
+  present (`isGitRepository`) but does not analyze commit history; that is
+  Phase 1E. The project itself is a Git repository on GitHub.
 - **JS/TS only.** Python/other language analyzers are explicitly out of the
   near-term MVP.
 - **Config detection heuristic.** `isConfigFile` matches a curated basename
@@ -316,6 +317,7 @@ Phase 1C (see §10).
 
 - Phases 1A and 1B are **complete and verified**.
 - 32 tests pass; build/typecheck/lint/format/CLI smoke all pass.
-- The repository is not a Git repository (`isGitRepository: false`).
+- The repository is a Git repository on branch `master`, pushed to
+  `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - **Next task:** Phase 1C, TypeScript/JavaScript Analysis (not started).
 - **Blockers:** none.
