@@ -76,3 +76,4 @@ export {
   type FindingsContext,
   type FindingsResult,
 } from "./findings/index.js";
+export { scanRepository, type EngineOptions } from "./engine.js";

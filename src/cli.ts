@@ -1,32 +1,36 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
 import { Command } from "commander";
-import { createScanner } from "./scanner/scanner.js";
 import { ScanError } from "./scanner/errors.js";
-import { createTypeScriptAnalyzer, type FileAnalysis } from "./analyzers/index.js";
-import { buildDependencyGraph } from "./dependencies/graph.js";
+import { scanRepository } from "./engine.js";
 import { analyzeGitRepository } from "./git/analysis.js";
 import { GitAnalysisError } from "./git/errors.js";
-import { runFindings } from "./findings/engine.js";
-import type { DiscoveryResult } from "./scanner/results.js";
+import type { ScanResult } from "./types/scan.js";
 
 /**
- * Run repository discovery against `path` (defaults to cwd), then print a
- * compact summary. Later phases will persist a full ScanResult; discovery
- * output is intentionally human-readable for now.
+ * Run the full analysis pipeline against `path` and print the result.
+ * `--json` prints the canonical `ScanResult` as stable JSON on stdout.
+ * Presentation-only: all analysis logic lives in the engine.
  */
-async function scanCommand(pathValue?: string): Promise<void> {
+async function scanCommand(pathValue: string | undefined, opts: { json?: boolean }): Promise<void> {
   const targetPath = pathValue ?? process.cwd();
-  const scanner = createScanner();
   try {
-    const result: DiscoveryResult = await scanner.scan(targetPath);
-    printScanSummary(result);
+    const result = await scanRepository(targetPath);
+    if (opts.json) {
+      // JSON mode: stdout carries ONLY the deterministic JSON document.
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+      return;
+    }
+    printScanReport(result);
   } catch (err) {
     if (err instanceof ScanError) {
-      // eslint-disable-next-line no-console
-      console.error(`Error: ${err.message}`);
+      if (opts.json) {
+        process.stdout.write(JSON.stringify({ error: { message: err.message } }) + "\n");
+      } else {
+        // eslint-disable-next-line no-console
+        console.error(`Error: ${err.message}`);
+      }
       process.exitCode = 1;
       return;
     }
@@ -34,70 +38,105 @@ async function scanCommand(pathValue?: string): Promise<void> {
   }
 }
 
-function printScanSummary(result: DiscoveryResult): void {
-  const kinds = new Map<string, number>();
-  for (const f of result.files) {
-    kinds.set(f.category, (kinds.get(f.category) ?? 0) + 1);
-  }
-  const kindsLine = [...kinds.entries()].map(([k, n]) => `${k}: ${n}`).join(", ");
+/** A concise human-readable repository overview. */
+function printScanReport(result: ScanResult): void {
   // eslint-disable-next-line no-console
-  console.log(`Scanned ${result.rootPath}`);
+  console.log(`Repository`);
   // eslint-disable-next-line no-console
-  console.log(`  isGitRepository: ${result.isGitRepository}`);
+  console.log(`  root: ${result.rootPath}`);
   // eslint-disable-next-line no-console
-  console.log(
-    `  ${result.totals.totalFiles} files, ${result.totals.totalDirectories} dirs, ` +
-      `(${kindsLine})`,
-  );
+  console.log(`  languages: ${result.languages.join(", ") || "(none)"}`);
+
   // eslint-disable-next-line no-console
-  console.log(`  took ${result.durationMs}ms`);
-  if (result.unreadable.length > 0) {
+  console.log(`Files`);
+  // eslint-disable-next-line no-console
+  console.log(`  ${result.files.length} file(s)`);
+  const sourceCount = result.files.filter((f) => f.kind === "source").length;
+  // eslint-disable-next-line no-console
+  console.log(`  ${sourceCount} source file(s)`);
+
+  // eslint-disable-next-line no-console
+  console.log(`Code analysis`);
+  const functions = result.modules.reduce((n, m) => n + exportsCount(m.exports), 0);
+  // eslint-disable-next-line no-console
+  console.log(`  ${result.modules.length} module(s)`);
+  // eslint-disable-next-line no-console
+  console.log(`  ${functions} exported symbol(s)`);
+
+  // eslint-disable-next-line no-console
+  console.log(`Dependencies`);
+  // eslint-disable-next-line no-console
+  console.log(`  ${result.dependencies.length} edge(s)`);
+  // eslint-disable-next-line no-console
+  console.log(`  ${result.cycles.length} cycle(s)`);
+
+  // eslint-disable-next-line no-console
+  console.log(`Git`);
+  if (result.stats === null) {
     // eslint-disable-next-line no-console
-    console.log(`  ${result.unreadable.length} file(s) unreadable`);
+    console.log(`  (not a Git repository)`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(
+      `  ${result.stats.totalCommits} commit(s), ${result.stats.totalContributors} contributor(s)`,
+    );
   }
+
+  const bySeverity = new Map<string, number>();
+  for (const f of result.findings) {
+    bySeverity.set(f.severity, (bySeverity.get(f.severity) ?? 0) + 1);
+  }
+  const severityLine = [...bySeverity.entries()].map(([s, n]) => `${s}: ${n}`).join(", ");
+  // eslint-disable-next-line no-console
+  console.log(`Findings`);
+  // eslint-disable-next-line no-console
+  console.log(`  ${result.findings.length} finding(s)${severityLine ? ` (${severityLine})` : ""}`);
+  // eslint-disable-next-line no-console
+  console.log(`Hotspots`);
+  // eslint-disable-next-line no-console
+  console.log(`  ${result.hotspots.length} hotspot(s)`);
+
+  // eslint-disable-next-line no-console
+  console.log(`Completed in ${result.durationMs}ms (schema v${result.schemaVersion})`);
+}
+
+/** Count exported symbols across a module's export list. */
+function exportsCount(exports: readonly { kind: string }[]): number {
+  return exports.length;
+}
+
+/** Write a machine-readable Git-error to stderr (JSON mode). */
+function writeJsonError(message: string): void {
+  process.stdout.write(JSON.stringify({ error: { message } }) + "\n");
 }
 
 /**
- * Run the full deterministic pipeline for a repository and emit findings +
- * hotspots. Reuses the scanner/analyzer/graph/git layers; no re-scanning.
+ * Run the full deterministic pipeline once and print its findings + hotspots.
+ * `--json` emits a stable machine-readable document on stdout.
  */
 async function findingsCommand(
   pathValue: string | undefined,
-  opts: { recent: string },
+  opts: { recent: string; json?: boolean },
 ): Promise<void> {
   const targetPath = pathValue ?? process.cwd();
   const recentLimit = Number.parseInt(opts.recent, 10) || 10;
-  const scanner = createScanner();
-  const analyzer = createTypeScriptAnalyzer();
   try {
-    const discovery = await scanner.scan(targetPath);
-
-    // Analyze every source file.
-    const analyses = new Map<string, FileAnalysis>();
-    for (const file of discovery.files) {
-      if (!file.isSource) continue;
-      try {
-        analyses.set(
-          file.absolutePath,
-          analyzer.analyzeFile(file.absolutePath, readFileSync(file.absolutePath, "utf8")),
-        );
-      } catch (err) {
-        // A single unparseable file must not abort findings.
-        if (err instanceof Error) {
-          // eslint-disable-next-line no-console
-          console.error(`Warning: skipping ${file.path}: ${err.message}`);
-        }
-      }
+    const result = await scanRepository(targetPath, { recentLimit });
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify({ findings: result.findings, hotspots: result.hotspots }, null, 2) + "\n",
+      );
+      return;
     }
-
-    const graph = buildDependencyGraph(discovery, analyses);
-    const stats = await analyzeGitRepository(targetPath, { recentLimit });
-    const result = runFindings({ discovery, analyses, graph, stats });
     printFindings(result);
   } catch (err) {
     if (err instanceof ScanError || err instanceof GitAnalysisError) {
-      // eslint-disable-next-line no-console
-      console.error(`Error: ${err.message}`);
+      if (opts.json) {
+        writeJsonError(err.message);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error(`Error: ${err.message}`);
+      }
       process.exitCode = 1;
       return;
     }
@@ -105,7 +144,7 @@ async function findingsCommand(
   }
 }
 
-function printFindings(result: Awaited<ReturnType<typeof runFindings>>): void {
+function printFindings(result: ScanResult): void {
   // eslint-disable-next-line no-console
   console.log(`Findings for ${result.rootPath}`);
   // eslint-disable-next-line no-console
@@ -134,6 +173,7 @@ export function buildProgram(): Command {
     .command("scan")
     .description("Analyze a repository and print a summary")
     .argument("[path]", "directory to scan (defaults to current working directory)")
+    .option("--json", "emit the canonical ScanResult as JSON on stdout")
     .action(scanCommand);
 
   program
@@ -163,6 +203,7 @@ export function buildProgram(): Command {
     .description("Run deterministic findings and hotspot analysis on a repository")
     .argument("[path]", "directory to analyze (defaults to current working directory)")
     .option("--recent <n>", "number of recent commits to consider (default 10)", "10")
+    .option("--json", "emit findings+hotspots as JSON on stdout")
     .action(findingsCommand);
 
   return program;

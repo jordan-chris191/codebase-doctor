@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Findings / Hotspots**
+**CLI polish**
 
 Status: **COMPLETE** (verified)
 
@@ -11,12 +11,12 @@ Status: **COMPLETE** (verified)
 ## Current Status
 
 - Phases 1A (Foundation), 1B (Repository Discovery), 1C (TypeScript/JavaScript
-  Analysis), 1D (Dependency Graph), 1E (Git Analysis) and the Findings /
-  Hotspots phase are **COMPLETE** and verified.
+  Analysis), 1D (Dependency Graph), 1E (Git Analysis), Findings / Hotspots and
+  CLI polish are **COMPLETE** and verified.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
-- The next phase (CLI polish) has **not** started.
+- The next phase (MCP Server) has **not** started.
 
 ---
 
@@ -267,6 +267,48 @@ Implemented:
 **Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
 no coverage percentage claimed.
 
+### CLI polish
+
+**Status: COMPLETE**
+
+Implemented:
+
+- **Analysis engine** (`src/engine.ts`): `scanRepository(rootPath)` runs the full
+  deterministic pipeline ONCE (discovery → TS/JS analysis → dependency graph →
+  Git → findings/hotspots) and aggregates everything into a canonical
+  `ScanResult`. Single source of truth for the CLI and future MCP/AI; no
+  re-scan/re-parse/re-git.
+- **Persistent `ScanResult`** — the existing canonical type is now PRODUCED:
+  `languages`, `files` (FileInfo, POSIX paths, `codeLineCount`≈`lineCount`),
+  `modules`, `dependencies`, `cycles`, `stats` (null for non-Git), `findings`,
+  `hotspots`. Git analysis is best-effort (non-Git → `stats: null`).
+- **`--json` mode** — `codebase-doctor scan --json` and
+  `codebase-doctor findings --json` emit stable JSON on **stdout only**;
+  diagnostics go to stderr. Errors in JSON mode emit a structured
+  `{"error":{...}}` document. `scan --json` produces deterministic
+  repository-derived data; `scanTimestamp` and `durationMs` are intentionally
+  time-varying fields, so determinism tests normalize these fields before
+  comparison.
+- **Human-readable report** — `codebase-doctor scan` prints concise sections:
+  Repository, Files, Code analysis, Dependencies, Git, Findings, Hotspots.
+- **Command architecture** — presentation separated from analysis; engine is
+  the orchestrator, CLI formats the resulting `ScanResult`.
+- 8 new CLI/engine tests (`test/cli/`); 175 tests total.
+
+**Verification:**
+
+- `npm run build` — PASS
+- `npm run typecheck` — PASS
+- `npm run test` — PASS (175 tests: 167 existing + 8 new)
+- `npm run lint` — PASS
+- `npm run format:check` — PASS
+- CLI smoke (`scan`, `scan --json`, `git`, `findings`) — PASS
+- JSON parsed via Node; deterministic repository-derived data across two runs
+  (after normalizing `scanTimestamp`/`durationMs`) — PASS
+
+**Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
+no coverage percentage claimed.
+
 ---
 
 Phase 1C acceptance criteria (all met):
@@ -355,18 +397,20 @@ None.
 
 ## Next Task
 
-### CLI polish (NOT STARTED)
+### MCP Server (NOT STARTED)
 
-Richer CLI reporting for the existing `scan`/`git`/`findings` commands
-(e.g. machine-readable JSON output, `--json` flag, richer summaries).
+A Model Context Protocol server exposing the deterministic engine
+(`scanRepository` → `ScanResult`) as MCP tools. The engine's clean
+CLI/MCP/AI boundary from CLI polish makes MCP a thin consumer.
 
 Planned objectives:
 
-- Structured (JSON) output mode for `scan` / `git` / `findings`
-- Persistent `ScanResult` artifact (full aggregation of all phases)
-- No dashboard/UI; keep the CLI a thin reporting surface
+- MCP tool(s): `scan` / `analyze_repository` returning the canonical
+  `ScanResult`
+- Deterministic, structured output (no AI, no re-parsing)
+- No change to the engine; MCP is a thin consumer
 
-Do NOT start CLI polish until explicitly instructed.
+Do NOT start the MCP Server phase until explicitly instructed.
 
 ---
 
@@ -378,8 +422,8 @@ Do NOT start CLI polish until explicitly instructed.
 4. Phase 1D — Dependency Graph — **COMPLETE**
 5. Phase 1E — Git Analysis — **COMPLETE**
 6. Findings / Hotspots — **COMPLETE**
-7. CLI polish — **NEXT, not started**
-8. MCP Server (first-class interface)
+7. CLI polish — **COMPLETE**
+8. MCP Server — **NEXT, not started**
 9. Claude Code Integration
 10. AI Reasoning Layer (optional, after deterministic core)
 11. Change Validation
@@ -390,6 +434,19 @@ Do NOT start CLI polish until explicitly instructed.
 ## Session Log
 
 ## 2026-09-07
+
+- Completed the CLI polish phase.
+- Analysis engine (`src/engine.ts`): `scanRepository` runs the full pipeline
+  once and produces the canonical `ScanResult` (single source of truth).
+- CLI `scan` now reports the engine output; `--json` on `scan`/`findings`
+  emits stable JSON on stdout (diagnostics to stderr; structured JSON errors).
+- Added 8 CLI/engine tests (175 total passing); build/typecheck/lint/format PASS.
+- Coverage still unverified (`@vitest/coverage-v8` not installed — pre-existing).
+
+Next action:
+Begin the MCP Server phase when instructed. Read this file and REPORT.md first.
+
+## 2026-09-07 (earlier)
 
 - Completed the Findings / Hotspots phase.
 - Deterministic rule engine (`src/findings/`): `high-complexity` (≥15),

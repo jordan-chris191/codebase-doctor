@@ -249,6 +249,27 @@ test/
 - Deterministic ordering (severity/ruleId/path/measured; hotspots ranking/path).
 - **25 findings tests**; 167 tests total.
 
+**CLI polish (Phase 1G, complete):**
+
+- **Analysis engine** (`src/engine.ts`): `scanRepository(rootPath)` runs the full
+  deterministic pipeline ONCE and aggregates everything into the canonical
+  `ScanResult`. Single source of truth shared by CLI and future MCP/AI.
+  No re-scan, re-parse, or re-Git.
+- **Persistent `ScanResult`** — the canonical type is now produced: `languages`,
+  `files` (POSIX paths, `codeLineCount`≈`lineCount`), `modules`, `dependencies`,
+  `cycles`, `stats` (null for non-Git, best-effort), `findings`, `hotspots`.
+- **`--json` mode** — `codebase-doctor scan --json` /
+  `codebase-doctor findings --json`: stable JSON on stdout only; diagnostics to
+  stderr; JSON-mode errors emit `{"error":{...}}`. `scan --json` produces
+  deterministic repository-derived data; `scanTimestamp` and `durationMs` are
+  intentionally time-varying, so determinism tests normalize these fields
+  before comparison.
+- **Human-readable report** — `scan` prints sections: Repository, Files, Code
+  analysis, Dependencies, Git, Findings, Hotspots.
+- **Command architecture** — presentation (CLI) separated from analysis
+  (engine); the CLI formats the engine's `ScanResult`.
+- **8 CLI/engine tests** (`test/cli/`); 175 tests total.
+
 ## 7. Development Phases
 
 1. **Phase 1A — Foundation** — COMPLETE
@@ -257,8 +278,8 @@ test/
 4. **Phase 1D — Dependency Graph** — COMPLETE
 5. **Phase 1E — Git Analysis** — COMPLETE
 6. **Findings / Hotspots** — COMPLETE
-7. **CLI polish** — NEXT, NOT STARTED
-8. **MCP Server** — PLANNED (first-class interface)
+7. **CLI polish** — COMPLETE
+8. **MCP Server** — NEXT, NOT STARTED
 9. **Claude Code Integration** — PLANNED
 10. **AI Reasoning Layer** — PLANNED (optional, after deterministic core)
 11. **Change Validation** — PLANNED
@@ -266,8 +287,8 @@ test/
 
 ## 8. Current Phase
 
-**Findings / Hotspots** is COMPLETE and verified. The next phase,
-**CLI polish**, has not started.
+**CLI polish** is COMPLETE and verified. The next phase, **MCP Server**, has
+not started.
 
 ## 9. Domain Model
 
@@ -434,7 +455,7 @@ future work.
 
 ## 12. Testing and Verification
 
-- **167 tests** across 14 files:
+- **175 tests** across 15 files:
   - `test/unit/types.test.ts` (3) — LANGUAGES immutability, ScanResult schema
   - `test/unit/cli.test.ts` (2) — command registration, version
   - `test/scanner/paths.test.ts` (11) — path normalization, test/config detection
@@ -471,6 +492,10 @@ future work.
     hotspots (no/one/multiple signals, deterministic aggregation), determinism
     (repeated analysis identical), empty repo (no fabricated findings),
     malformed upstream (missing analysis → no misleading findings)
+  - `test/cli/engine.test.ts` (8) — `scanRepository` aggregation, per-run
+    determinism, non-Git → `stats:null`; `--json` valid-JSON parse,
+    determinism, no stdout contamination (stderr clean), JSON error object,
+    command regression (scan/git/findings)
 - **Fixture repos** built at runtime in a temp dir via
   `test/helpers/fs.ts` + `test/fixtures/kitchen-sink.ts`; cleaned up
   automatically. Analyzer tests analyze content in memory (no fixtures);
@@ -480,8 +505,10 @@ future work.
 - **Coverage** thresholds configured at 80% but not yet run/verified
   (`@vitest/coverage-v8` not installed).
 - **Verification pipeline** (all PASS as of 2026-09-07):
-  build, typecheck, test (167), lint, format:check, and CLI smoke tests
-  (`findings` deterministic across two runs; `scan`/`git` regression PASS).
+  build, typecheck, test (175), lint, format:check, and CLI smoke tests
+  (`scan` human report + `--json` parsed via Node, `git`, `findings`;
+  JSON repository-derived data deterministic across two runs after
+  normalizing `scanTimestamp`/`durationMs`).
 
 ## 13. Dependencies
 
@@ -538,20 +565,20 @@ TypeScript Compiler API (see §10).
 
 ## 15. Future Development
 
-- **CLI polish:** richer scan/report output (e.g. `--json`, persistent
-  `ScanResult`).
-- **MCP Server:** first-class interface exposing scan/architecture/dependency/
-  git/finding tools.
+- **MCP Server:** a Model Context Protocol server exposing the deterministic
+  engine (`scanRepository` → `ScanResult`) as MCP tools — a thin consumer of
+  the canonical result.
 - **AI Reasoning Layer** (optional): explanation and prioritization on top
   of the deterministic data — never as the source of truth.
 - **Change Validation** — impact assessment for proposed changes.
 
 ## 16. Current Status Summary
 
-- Phases 1A, 1B, 1C, 1D, 1E and Findings / Hotspots are **complete and verified**.
-- 167 tests pass (142 previous + 25 new findings tests);
+- Phases 1A, 1B, 1C, 1D, 1E, Findings / Hotspots and CLI polish are **complete
+  and verified**.
+- 175 tests pass (167 previous + 8 new CLI/engine tests);
   build/typecheck/lint/format/CLI smoke all pass.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
-- **Next task:** CLI polish (not started).
+- **Next task:** MCP Server (not started).
 - **Blockers:** none.

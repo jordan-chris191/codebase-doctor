@@ -10,11 +10,11 @@ When an AI agent works in an unfamiliar repository, it typically has to rediscov
 
 The project follows a **deterministic-first** philosophy: repository facts (structure, dependencies, cycles, complexity, churn) are computed by reproducible, testable code — never by an LLM. AI reasoning is a potential future layer that can explain or prioritize the deterministic output, but it is never the source of truth. This is not a generic file-search tool, not a RAG wrapper, and not an AI code generator.
 
-> **Status: early development.** Codebase Doctor is under active construction. The current implementation covers repository discovery, per-file TypeScript/JavaScript analysis, a repository-level dependency graph, Git history analysis, and deterministic findings/hotspots; MCP and AI are planned but not yet built.
+> **Status: early development.** Codebase Doctor is under active construction. The current implementation covers repository discovery, per-file TypeScript/JavaScript analysis, a repository-level dependency graph, Git history analysis, deterministic findings/hotspots, and a canonical aggregated `ScanResult` with JSON output; MCP and AI are planned but not yet built.
 
 ## Current Status
 
-The project is developed in phases. The current implementation provides **repository discovery** (Phase 1B), **TypeScript/JavaScript analysis** (Phase 1C), a **dependency graph** (Phase 1D), **Git analysis** (Phase 1E), and **findings/hotspots** on a strict TypeScript foundation (Phase 1A).
+The project is developed in phases. The current implementation provides **repository discovery** (Phase 1B), **TypeScript/JavaScript analysis** (Phase 1C), a **dependency graph** (Phase 1D), **Git analysis** (Phase 1E), **findings/hotspots**, and a polished **CLI** with a canonical `ScanResult` on a strict TypeScript foundation (Phase 1A).
 
 | Phase | Status |
 |---|---|
@@ -24,12 +24,13 @@ The project is developed in phases. The current implementation provides **reposi
 | Phase 1D — Dependency Graph | ✅ Complete |
 | Phase 1E — Git Analysis | ✅ Complete |
 | Findings / Hotspots | ✅ Complete |
+| CLI polish | ✅ Complete |
 
 Later phases (MCP Server, AI Reasoning Layer, Change Validation) are planned but not yet started. See [Development Roadmap](#development-roadmap) below.
 
 ## Architecture
 
-The current pipeline computes repository structure in discrete layers. The scanner, the TypeScript/JavaScript analyzer, the dependency graph, Git analysis, and findings/hotspots are implemented today; MCP and everything downstream is planned.
+The current pipeline computes repository structure in discrete layers. The scanner, the TypeScript/JavaScript analyzer, the dependency graph, Git analysis, findings/hotspots, and a canonical `ScanResult` engine are implemented today; MCP and everything downstream is planned.
 
 ```
 Repository
@@ -44,6 +45,8 @@ Git Analysis (IMPLEMENTED — commits, churn, contributors, recent)
     ↓
 Findings / Hotspots (IMPLEMENTED — deterministic rules)
     ↓
+ScanResult (IMPLEMENTED — canonical aggregated result; JSON output)
+    ↓
 MCP Server (PLANNED — not yet built)
     ↓
 AI Coding Agents
@@ -56,6 +59,8 @@ AI Coding Agents
 - **Dependency graph** (`src/dependencies`) — repository-aware module resolution via the TypeScript Compiler API (honoring `tsconfig.json` `baseUrl`/`paths`), classification into internal/external/unresolved, a deterministic `DependencyGraph` of weighted edges, and cycle detection (Tarjan SCC). Re-exports and CommonJS/dynamic/type-only imports participate.
 - **Git analysis** (`src/git`) — deterministic repository-level Git facts via the Git CLI: commit count, first/last commit dates, contributors, per-file churn, and bounded recent activity. Batch commands (`--format`, `--numstat`), no per-file `git` processes, POSIX-normalized paths. Documented policies for merges, renames, and binary files.
 - **Findings / Hotspots** (`src/findings`) — a deterministic rules engine over the Phase 1A–1E outputs: explicit thresholds for high complexity, high churn, high fan-in/out, dependency cycles, and large+complex files. Each finding carries the rule ID, severity, measured value, threshold, and evidence; hotspots expose raw signals (complexity, churn, fan-in/out, cycle) plus contributing findings, with no opaque composite score. Never AI.
+- **Engine + ScanResult** (`src/engine.ts`) — `scanRepository(rootPath)` runs the full deterministic pipeline once and aggregates everything into the canonical `ScanResult` (languages, files, modules, dependencies, cycles, Git stats, findings, hotspots). Single source of truth for the CLI and future MCP/AI. No re-scan/re-parse/re-Git.
+- **CLI** (`src/cli.ts`) — `scan` (human report or `--json`), `git`, `findings` (`--json`). JSON goes to stdout only; diagnostics to stderr; deterministic output.
 
 **Foundation present (types only):**
 
@@ -63,7 +68,6 @@ AI Coding Agents
 
 **Planned (not yet built):**
 
-- **Findings / hotspots** — deterministic risk/debt rules over the computed model.
 - **MCP server** — the first-class interface for exposing this intelligence to coding agents.
 - **AI reasoning layer** — optional explanations built on top of the deterministic data.
 
@@ -96,7 +100,8 @@ Currently implemented:
 - **Git policies** — merges count in totals but not churn/contributors; renames attributed to the post-rename path; binary changes counted as churn with zero numeric add/del; empty Git repos return an all-null shape (not an error).
 - **Deterministic findings** — explicit rules with documented thresholds (`high-complexity` ≥15, `high-churn` ≥200, `high-fan-out` ≥20, `high-fan-in` ≥10, `dependency-cycle`, `large-complex-file`). Each finding exposes rule ID, severity, measured value, threshold, and evidence.
 - **Expliable hotspots** — a file flagged by ≥2 priority rules is a hotspot that exposes raw `signals` (complexity, churn, fan-in/out, cycle) and contributing findings; no opaque composite score, no AI.
-- **CLI integration** — `codebase-doctor scan [path]` runs discovery; `codebase-doctor git [path] [--recent N]` runs Git analysis; `codebase-doctor findings [path] [--recent N]` runs deterministic findings + hotspots.
+- **CLI integration** — `codebase-doctor scan [path]` runs the full pipeline and prints a concise human-readable report; `codebase-doctor git [path] [--recent N]` runs Git analysis; `codebase-doctor findings [path] [--recent N]` runs findings + hotspots.
+- **`--json` output** — `codebase-doctor scan --json` and `codebase-doctor findings --json` emit stable, deterministic JSON (the canonical `ScanResult`) on stdout; diagnostics go to stderr; JSON-mode errors are machine-readable.
 
 ## Technology Stack
 
@@ -130,6 +135,9 @@ node dist/cli.js scan
 
 # Scan a specific path
 node dist/cli.js scan /path/to/repository
+
+# Emit the canonical ScanResult as JSON
+node dist/cli.js scan /path/to/repository --json
 
 # Run Git analysis on the current repository
 node dist/cli.js git
@@ -210,11 +218,12 @@ Currently tested:
 - **Cycle detection** (`test/dependencies/cycles.test.ts`) — simple, longer, multiple, and self-cycles; deterministic order; stable equivalent input; diamond graphs produce no false cycles.
 - **Git analysis** (`test/git/analysis.test.ts`) — multi-commit, single-commit, empty repo, non-Git dir, multiple contributors, add/modify/delete, multi-file commit, rename policy, recent-activity limit/order, determinism, POSIX path normalization, binary churn, merge policy. Fixtures use real temp Git repositories with local identity and fixed commit dates (never the user's global Git config or wall-clock).
 - **Findings** (`test/findings/rules.test.ts`) — complexity/churn/fan-in/fan-out below/boundary/above thresholds, cycles (none/self/multi/multiple), large+complex files, hotspots (no/one/multiple signals, deterministic aggregation), determinism (repeated analysis identical), empty repos (no fabricated findings), and malformed upstream (missing analysis → no misleading findings).
+- **Engine & CLI** (`test/cli/engine.test.ts`) — `scanRepository` aggregates the canonical `ScanResult`; per-run determinism; non-Git → `stats:null`; `--json` parses as valid JSON, is deterministic, keeps stdout clean (no headings/ANSI; stderr empty), emits structured JSON errors, and preserves existing `scan`/`git`/`findings` commands.
 - **Paths & detection** (`test/scanner/paths.test.ts`) — POSIX path normalization, relative-path computation, test/config file detection.
 - **Error handling** (`test/scanner/errors.test.ts`) — structured errors for missing/file paths.
 - **Types & CLI** (`test/unit/`) — domain-model shape and CLI command registration.
 
-**Latest verified result:** 167 tests passing across 14 files (`npm run test`).
+**Latest verified result:** 175 tests passing across 15 files (`npm run test`).
 
 > Coverage thresholds are configured in `vitest.config.ts`, but coverage has not yet been run (the coverage provider is not installed) and no coverage percentage is claimed.
 
@@ -226,8 +235,8 @@ Planned phases:
 - **Phase 1D — Dependency Graph** — ✅ Complete. Repository-aware module resolution, internal/external/unresolved classification, a deterministic `DependencyGraph` of weighted edges, and cycle detection, all on the same TypeScript compiler AST used in Phase 1C.
 - **Phase 1E — Git Analysis** — ✅ Complete. Deterministic Git history facts (commit count, first/last dates, contributors, per-file churn, recent activity) via batch Git CLI commands, with documented merge/rename/binary policies.
 - **Findings / Hotspots** — ✅ Complete. A deterministic rules engine over structure + complexity + Git churn, with explicit thresholds and explainable, signal-exposing hotspots.
-- **CLI polish** — next planned phase: richer reporting (e.g. `--json`, persistent `ScanResult`).
-- **MCP Server** — the first-class interface through which AI coding agents query the intelligence.
+- **CLI polish** — ✅ Complete. A canonical `ScanResult` engine (`scanRepository`), a human-readable `scan` report, and stable `--json` output for `scan`/`findings`.
+- **MCP Server** — next planned phase: the first-class interface through which AI coding agents query the intelligence.
 
 Further planned work: an AI reasoning layer (optional explanations on top of the deterministic core), change validation (impact assessment for proposed edits), and an optional dashboard — all explicitly out of the near-term scope.
 
