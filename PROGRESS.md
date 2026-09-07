@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 1C — TypeScript/JavaScript Analysis**
+**Phase 1D — Dependency Graph**
 
 Status: **COMPLETE** (verified)
 
@@ -10,12 +10,12 @@ Status: **COMPLETE** (verified)
 
 ## Current Status
 
-- Phases 1A (Foundation), 1B (Repository Discovery) and 1C
-  (TypeScript/JavaScript Analysis) are **COMPLETE** and verified.
+- Phases 1A (Foundation), 1B (Repository Discovery), 1C (TypeScript/JavaScript
+  Analysis) and 1D (Dependency Graph) are **COMPLETE** and verified.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
-- The next phase (1D — Dependency Graph) has **not** started.
+- The next phase (1E — Git Analysis) has **not** started.
 
 ---
 
@@ -121,6 +121,71 @@ parse.
 80% thresholds were never run. This is a pre-existing gap from Phase 1A, not
 introduced by 1C; no coverage percentage is claimed.
 
+### Phase 1D — Dependency Graph
+
+**Status: COMPLETE**
+
+Implemented:
+
+- **Module resolution** (`src/dependencies/resolver.ts`): repository-aware
+  `ts.resolveModuleName` — honors `tsconfig.json` (`baseUrl`, `paths`,
+  moduleResolution, module) when present; defaults to ESM/NodeNext
+  otherwise. Resolves relative/extensionless/parent-relative, TSX/JS/JSX,
+  directory/index, and `paths` aliases.
+- **Classification** — every reference resolves to `internal` (inside repo
+  root), `external` (`isExternalLibraryImport`/`node_modules`/outside root),
+  or `unresolved` (kept, never silently discarded).
+- **Graph** (`src/dependencies/graph.ts`): `buildDependencyGraph(discovery,
+  analyses)` consumes scanner output + Phase 1C `FileAnalysis` (references +
+  re-export `source`) and produces a deterministic `DependencyGraph` with
+  nodes, edges, cycles, and unresolved. Edge = `kind` (classification) +
+  `type` (static/type-only/dynamic/commonjs/side-effect) + `weight`.
+- **Re-exports** — `export {x} from "./m"` / `export * as ns` = **static**
+  edges; pure `export * from` = **side-effect** edge. No symbol-level
+  resolution.
+- **Cycle detection** (`src/dependencies/cycles.ts`): Tarjan SCC + canonical
+  per-SCC enumeration; simple/longer/multiple/self cycles reported once,
+  deterministically.
+- **Domain** (`src/types/dependency.ts`): `DependencyGraph`, `DependencyNode`,
+  `UnresolvedDependency`, `DependencyClassification`; `DependencyEdge` gained
+  `kind`, `specifier`; `DependencyType = ImportType`.
+- 32 new dependency tests (`test/dependencies/`); 129 tests total.
+
+**Verification:**
+
+- `npm run build` — PASS
+- `npm run typecheck` — PASS
+- `npm run test` — PASS (129 tests: 97 existing + 32 new)
+- `npm run lint` — PASS
+- `npm run format:check` — PASS
+- CLI smoke test (scan `D:\Projects\CodeBaseDoctor`) — PASS
+  (`64 files, 17 dirs`)
+- Deterministic graph output verified across equivalent fixture repos.
+
+**Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
+no coverage percentage claimed.
+
+Phase 1D acceptance criteria (all met):
+
+- [x] Repository-aware module resolution (relative, extensionless, parent,
+  index/dir, `paths` aliases)
+- [x] Internal / external / unresolved classification
+- [x] Re-exports (`export {x} from`, `export * from`, `export * as ns`)
+- [x] CommonJS `require()` follows internal/external classification
+- [x] Dynamic and type-only imports participate in the graph
+- [x] Deterministic, sorted graph output (no traversal-order dependence)
+- [x] Duplicate edges collapsed into weighted edges
+- [x] Cycle detection (simple / longer / multiple / self) — canonical + unique
+- [x] Unresolved references retained (not silently discarded)
+- [x] Repository-boundary safety (no escaping path becomes internal)
+- [x] tsconfig honored (`baseUrl`, `paths`, module resolution)
+- [x] No second parser; TS Compiler API is the single source of truth
+- [x] Analyzer/CLI/MCP decoupled (pure `buildDependencyGraph`)
+- [x] Focused dependency tests exist (32 added; 129 total)
+- [x] Existing Phase 1A–1C tests continue to pass
+- [x] Typecheck / lint / build / format:check pass
+- [x] Phase 1E NOT started; no Git/hotspot/findings/UI scope creep
+
 ---
 
 Phase 1C acceptance criteria (all met):
@@ -209,24 +274,22 @@ None.
 
 ## Next Task
 
-### Phase 1D — Dependency Graph (NOT STARTED)
+### Phase 1E — Git Analysis (NOT STARTED)
 
-Build the dependency graph over the per-file `FileAnalysis` produced by
-Phase 1C, using the **TypeScript Compiler API** as the single source of truth
-(the Phase 1C decision). `ModuleReference`/`ModuleExport` already capture
-sources, import types, and export edges (including `source` on re-exports).
+Analyze Git history over the scanned repository: commit counts, file churn,
+contributors, last-modified dates, and recent activity — using efficient
+batch `git` operations. No history analysis exists yet; the scanner only
+detects the presence of `.git`.
 
 Planned objectives:
 
-- Resolve `ModuleReference.source` / `ModuleExport.source` to concrete files
-  (relative specifiers → files; bare specifiers → `external` packages)
-- Construct `DependencyEdge` nodes and edges (`internal | external |
-  type-only | dynamic | commonjs`)
-- Detect `DependencyCycle`s using a cycle-detection walk
-- Handle `export * from` and alias/namespace re-export indirection
-- Remain deterministic and single-source (no competing resolver)
+- Total commits and unique contributors
+- Earliest / latest commit dates
+- Files by churn (commit count per file)
+- Deterministic, cross-platform `git` invocation
+- Feed `RepoStats` / hotspot inputs for later phases
 
-Do NOT start Phase 1D until explicitly instructed.
+Do NOT start Phase 1E until explicitly instructed.
 
 ---
 
@@ -235,8 +298,8 @@ Do NOT start Phase 1D until explicitly instructed.
 1. Phase 1A — Foundation — **COMPLETE**
 2. Phase 1B — Repository Discovery — **COMPLETE**
 3. Phase 1C — TypeScript/JavaScript Analysis — **COMPLETE**
-4. Phase 1D — Dependency Graph — **NEXT, not started**
-5. Phase 1E — Git Analysis
+4. Phase 1D — Dependency Graph — **COMPLETE**
+5. Phase 1E — Git Analysis — **NEXT, not started**
 6. Findings / Hotspots
 7. CLI polish
 8. MCP Server (first-class interface)
@@ -250,6 +313,20 @@ Do NOT start Phase 1D until explicitly instructed.
 ## Session Log
 
 ## 2026-09-07
+
+- Completed Phase 1D (Dependency Graph).
+- Repository-aware `ts.resolveModuleName`; internal/external/unresolved
+  classification; deterministic edges, cycles (Tarjan SCC), unresolved list.
+- Domain evolved (`DependencyGraph`, `DependencyNode`, `UnresolvedDependency`,
+  `DependencyClassification`, `DependencyEdge.kind/specifier`).
+- Added 32 dependency tests (129 total passing); build/typecheck/lint/format PASS.
+- Coverage still unverified (`@vitest/coverage-v8` not installed — pre-existing).
+
+Next action:
+Begin Phase 1E (Git Analysis) when instructed. Read this file and REPORT.md
+first.
+
+## 2026-09-07 (earlier)
 
 - Completed Phase 1C (TypeScript/JavaScript Analysis).
 - Chose the TypeScript Compiler API as the canonical AST/analysis engine.

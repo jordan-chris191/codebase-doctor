@@ -12,7 +12,15 @@ export type {
   ExportKind,
   ImportType,
 } from "./types/module.js";
-export type { DependencyEdge, DependencyType, DependencyCycle } from "./types/dependency.js";
+export type {
+  DependencyEdge,
+  DependencyType,
+  DependencyClassification,
+  DependencyCycle,
+  DependencyGraph,
+  DependencyNode,
+  UnresolvedDependency,
+} from "./types/dependency.js";
 export type {
   Finding,
   FindingCategory,
@@ -30,3 +38,14 @@ export {
   type UnreadableFile,
 } from "./scanner/errors.js";
 export type { DiscoveryResult, ScannedFileMetadata, ScanTotals } from "./scanner/results.js";
+export {
+  buildDependencyGraph,
+  detectCycles,
+  createModuleResolver,
+  DependencyAnalysisError,
+  type GraphBuildOptions,
+  type ModuleResolver,
+  type ResolverOptions,
+  type ResolveResult,
+  type ResolutionKind,
+} from "./dependencies/index.js";

@@ -38,9 +38,12 @@ consumer rather than an integration seam.
 ```
 CLI (commander) ──► Scanner (discovery) ──► Deterministic metadata
                                   │
-                                  └──► Analyzer (parsing, Phase 1C+) ──► Domain model
-                                        (future)                 │
-                                                                 └──► MCP (future)
+                                  └──► Analyzer (parsing, Phase 1C) ──► FileAnalysis
+                                            │
+                                            └──► Dependency graph (Phase 1D) ──► DependencyGraph
+                                                    │
+                                                    └──► Findings / Hotspots /
+                                                         MCP (future)
 ```
 
 Layers:
@@ -50,9 +53,11 @@ Layers:
   every layer.
 - **Scanner** (`src/scanner`) — repository/file-tree discovery. Produces
   deterministic `ScannedFileMetadata` per file. Independent from the CLI.
-- **Analyzers** (`src/analyzers`) — define the `LanguageAnalyzer` contract
-  and `FileAnalysis` for language parsing. Only interfaces exist so far;
-  the concrete TypeScript analyzer is Phase 1C.
+- **Analyzers** (`src/analyzers`) — the `LanguageAnalyzer` contract and the
+  concrete TypeScript analyzer (Phase 1C), producing `FileAnalysis`.
+- **Dependencies** (`src/dependencies`) — repository-aware module resolution
+  (`ts.resolveModuleName`), deterministic `DependencyGraph` construction, and
+  cycle detection (Phase 1D). Consumes `FileAnalysis`; never re-parses source.
 - **Utils** (`src/utils`) — shared path normalization, gitignore handling,
   file classification, always-excluded directories.
 - **CLI** (`src/cli.ts`) — command surface; currently exposes a working
@@ -176,13 +181,39 @@ test/
   on one bad file); unsupported extensions rejected before parsing
 - 65 analyzer tests (`test/analyzer/`); 97 tests total
 
+**Phase 1D — Dependency Graph (complete):**
+
+- **Module resolution** (`src/dependencies/resolver.ts`) — repository-aware
+  `ts.resolveModuleName` honoring `tsconfig.json` (`baseUrl`, `paths`,
+  `moduleResolution`, `module`); defaults to ESM/NodeNext. Resolves relative,
+  extensionless, parent-relative, TSX/JS/JSX, directory/index, and `paths`
+  aliases. Never re-parses source; consumes `ModuleReference`/`ModuleExport.source`.
+- **Classification** — `internal` (inside repo root), `external`
+  (`isExternalLibraryImport`/`node_modules`/outside root), `unresolved`
+  (retained, never silently discarded).
+- **Graph** (`src/dependencies/graph.ts`) — `buildDependencyGraph(discovery,
+  analyses)` produces a deterministic `DependencyGraph`: sorted nodes, weighted
+  collapsed edges, canonical cycles, sorted unresolved list. Edge carries
+  `kind` (classification) + `type` (static/type-only/dynamic/commonjs/
+  side-effect) + `weight` + original `specifier`.
+- **Re-exports** — `export { x } from "./m"` / `export * as ns from "./m"`
+  are **static** edges; pure `export * from "./m"` is a **side-effect** edge.
+  No symbol-level resolution.
+- **Cycle detection** (`src/dependencies/cycles.ts`) — Tarjan SCC + canonical
+  per-SCC DFS enumeration; simple / longer / multiple / self cycles reported
+  exactly once, deterministically.
+- **Domain** (`src/types/dependency.ts`) — added `DependencyGraph`,
+  `DependencyNode`, `UnresolvedDependency`, `DependencyClassification`;
+  `DependencyEdge` gained `kind` and `specifier`; `DependencyType = ImportType`.
+- **32 dependency tests** (`test/dependencies/`); 129 tests total.
+
 ## 7. Development Phases
 
 1. **Phase 1A — Foundation** — COMPLETE
 2. **Phase 1B — Repository Discovery** — COMPLETE
 3. **Phase 1C — TypeScript/JavaScript Analysis** — COMPLETE
-4. **Phase 1D — Dependency Graph** — NEXT, NOT STARTED
-5. **Phase 1E — Git Analysis** — PLANNED
+4. **Phase 1D — Dependency Graph** — COMPLETE
+5. **Phase 1E — Git Analysis** — NEXT, NOT STARTED
 6. **Findings / Hotspots** — PLANNED
 7. **CLI polish** — PLANNED
 8. **MCP Server** — PLANNED (first-class interface)
@@ -193,8 +224,8 @@ test/
 
 ## 8. Current Phase
 
-**Phase 1C (TypeScript/JavaScript Analysis)** is COMPLETE and verified. The
-next phase, **Phase 1D (Dependency Graph)**, has not started.
+**Phase 1D (Dependency Graph)** is COMPLETE and verified. The next phase,
+**Phase 1E (Git Analysis)**, has not started.
 
 ## 9. Domain Model
 
@@ -208,13 +239,16 @@ Defined in `src/types`. All are pure, readonly, dictionary-shaped types.
 - **`Module`, `ModuleExport`, `ModuleReference`, `ExportKind`** (`module.ts`)
   — a module's exported symbols and its reference relationships. `ExportKind`
   includes `namespace` for `export namespace`/`export import X =`; `ModuleExport`
-  carries an optional `source` (present iff `isReExport`) so Phase 1D can build
-  export edges without a second parse. `ModuleReference` uses `ImportType`
-  (`static | type-only | dynamic | commonjs | side-effect`) and a `kind`
-  (`internal` currently; `external` reserved for resolution in Phase 1D).
-- **`DependencyEdge`, `DependencyCycle`** (`dependency.ts`) — dependency
-  graph edges and cycle groups. **Not yet produced** by any analyzer; types
-  are forward-declared for Phases 1C/1D.
+  carries an optional `source` (present iff `isReExport`) so the dependency
+  layer can build export edges without a second parse. `ModuleReference` uses
+  `ImportType` (`static | type-only | dynamic | commonjs | side-effect`).
+- **`DependencyGraph`, `DependencyNode`, `DependencyEdge`, `DependencyCycle`,
+  `DependencyClassification`, `UnresolvedDependency`** (`dependency.ts`) —
+  the repository-level dependency graph (Phase 1D). An edge carries `kind`
+  (internal/external/unresolved), `type` (`ImportType`), `weight`, and the
+  original `specifier`. `DependencyClassification` distinguishes internal /
+  external / unresolved. Unresolved references are retained in a list, never
+  discarded.
 - **`Finding`, `FindingCategory`, `FindingLocation`** (`finding.ts`) —
   issue/observation model for the later findings phase. Types exist; no
   finding rules are implemented yet.
@@ -266,6 +300,24 @@ future work.
   stable internal API (not on the public type surface) that reports token-level
   syntax errors without building a `Program`; read through a const-asserted
   interface.
+- **Repository-aware `ts.resolveModuleName` for the graph (Phase 1D).** The
+  same TypeScript Compiler API that parses files also resolves specifiers —
+  no second parser, no `dependency-cruiser`, no hand-rolled resolution. The
+  resolver honors `tsconfig.json` (`baseUrl`, `paths`, `moduleResolution`,
+  `module`), defaults to ESM/NodeNext when absent, and classifies results by
+  whether they live inside the repo root (`internal`), in `node_modules` /
+  outside (`external`), or fail to resolve (`unresolved`).
+- **Edge kind ⇄ type separation (Phase 1D).** A `DependencyEdge` carries both
+  `kind` (resolution classification: internal/external/unresolved) and `type`
+  (how it was referenced: static/type-only/dynamic/commonjs/side-effect), so
+  classification and semantics stay orthogonal.
+- **Re-export typing.** `export { x } from "./m"` and `export * as ns` are
+  **static** edges; pure `export * from "./m"` is a **side-effect** edge
+  (it re-exports everything with no named binding).
+- **Tarjan SCC + canonical enumeration for cycles (Phase 1D).** SCC
+  decomposition finds non-trivial groups; per-SCC DFS from the canonical
+  lowest node enumerates each elementary cycle exactly once. Self-loops are
+  reported independently, so a self-importing module is also caught.
 
 ## 11. Problems Encountered and Solutions
 
@@ -304,10 +356,18 @@ future work.
 - **`ExportSpecifier.name` is the exported name.** For `export { local as remote }`,
   `name` is `remote` and `propertyName` is `local`. Initial logic used the
   names backwards; tests caught it.
+- **Re-export double-emission (Phase 1D).** `export { x } from "./m"` appears
+  in Phase 1C BOTH as a `side-effect` reference AND as an export with `source`.
+  The graph builder now upgrades the reference edge to `static`/`type-only`
+  (for named/namespace re-exports) while a pure `export * from` stays
+  `side-effect` — so one `export` produces one correctly-typed edge, not two.
+- **Self-loops inside multi-node SCCs (Phase 1D).** Tarjan's SCC adjacency
+  omits self-edges, so a self-loop inside a larger SCC was lost. Self-loops are
+  now collected independently from the raw edges before SCC decomposition.
 
 ## 12. Testing and Verification
 
-- **97 tests** across 10 files:
+- **129 tests** across 12 files:
   - `test/unit/types.test.ts` (3) — LANGUAGES immutability, ScanResult schema
   - `test/unit/cli.test.ts` (2) — command registration, version
   - `test/scanner/paths.test.ts` (11) — path normalization, test/config detection
@@ -327,15 +387,24 @@ future work.
   - `test/analyzer/languages.test.ts` (12) — TS/TSX/JS/JSX + edge cases
     (empty, comments-only, syntax errors, unsupported, duplicate imports,
     unusual-but-valid syntax, determinism)
+  - `test/dependencies/graph.test.ts` (21) — basic/parent/extensionless
+    resolution, TSX/JS/JSX, index/dir, external + scoped, require (internal +
+    external), dynamic, type-only, re-exports, export-star/namespace,
+    path aliases, unresolved (relative + package), boundary safety, duplicate
+    collapse, ordering, mixed internal/external, nested
+  - `test/dependencies/cycles.test.ts` (7) — simple/multi/independent/self
+    cycles, deterministic order, stable equivalent input, diamond (no false
+    cycles)
 - **Fixture repos** built at runtime in a temp dir via
   `test/helpers/fs.ts` + `test/fixtures/kitchen-sink.ts`; cleaned up
-  automatically. Analyzer tests analyze content in memory (no fixtures).
+  automatically. Analyzer tests analyze content in memory (no fixtures);
+  dependency tests build fixture repos and scan+analyze them.
 - **Coverage** thresholds configured at 80% but not yet run/verified
   (`@vitest/coverage-v8` not installed).
 - **Verification pipeline** (all PASS as of 2026-09-07):
-  build, typecheck, test (97), lint, format:check, and a CLI smoke test
-  against the project itself: `57 files, 15 dirs, (documentation: 6,
-  config: 7, unknown: 1, source: 43), took ~39ms`, `isGitRepository: true`.
+  build, typecheck, test (129), lint, format:check, and a CLI smoke test
+  against the project itself: `64 files, 17 dirs, (documentation: 6,
+  config: 7, unknown: 1, source: 50), took ~39ms`, `isGitRepository: true`.
 
 ## 13. Dependencies
 
@@ -357,19 +426,20 @@ TypeScript Compiler API (see §10).
 
 ## 14. Known Limitations
 
-- **Dependency resolution / graph not yet built.** The analyzer captures
-  module references and export edges per file; resolving specifiers to files
-  and constructing `DependencyEdge`/`DependencyCycle` graphs is Phase 1D.
+- **Module resolution is not a full npm/bundler resolver.** It resolves
+  specifiers via the TypeScript compiler with the repo's tsconfig; workspace
+  references, monorepo symlinking heuristics, and package-exports/`browser`
+  field maps are not implemented.
 - **Per-file syntax analysis only.** Phase 1C parses one file at a time; it
-  does not type-check a project or do cross-file resolution.
-- **`ModuleReference.kind` is currently always `internal`.** `external`
-  (package) classification is reserved for Phase 1D resolution.
+  does not type-check a project or do cross-file semantic resolution.
+- **`DependencyEdge.source/target` and cycle `members` are absolute paths.**
+  Public presentation (CLI/MCP) will map them to repo-relative POSIX paths;
+  the domain retains absolute paths as the stable module IDs.
 - **Exported kind for some forms is conservative.** `export default <local-identifier>`
   reports `constant` (the kind of the underlying symbol is not knowable from
   that statement alone); anonymous defaults use an `(anonymous)` placeholder.
-- **Single-project.** Monorepo workspace awareness is out of scope for now.
-- **`ScanResult` vs `DiscoveryResult`.** The full `ScanResult` type is
-  forward-declared but not yet produced; `get_architecture`-style
+- **`ScanResult` vs `DiscoveryResult`/`DependencyGraph`.** The full `ScanResult`
+  type is forward-declared but not yet produced; `get_architecture`-style
   aggregation is future work.
 - **Coverage unverified.** 80% thresholds configured but not validated
   (`@vitest/coverage-v8` not installed).
@@ -380,25 +450,9 @@ TypeScript Compiler API (see §10).
   near-term MVP.
 - **Config detection heuristic.** `isConfigFile` matches a curated basename
   set + dot-rc patterns; not exhaustive for every ecosystem.
-- **Single-project.** Monorepo workspace awareness is out of scope for now.
-- **`ScanResult` vs `DiscoveryResult`.** The full `ScanResult` type is
-  forward-declared but not yet produced; `get_architecture`-style
-  aggregation is future work.
-- **Coverage unverified.** 80% thresholds configured but not validated.
-- **Git history not yet analyzed.** The scanner detects whether `.git` is
-  present (`isGitRepository`) but does not analyze commit history; that is
-  Phase 1E. The project itself is a Git repository on GitHub.
-- **JS/TS only.** Python/other language analyzers are explicitly out of the
-  near-term MVP.
-- **Config detection heuristic.** `isConfigFile` matches a curated basename
-  set + dot-rc patterns; not exhaustive for every ecosystem.
 
 ## 15. Future Development
 
-- **Phase 1D:** Dependency graph over the Phase 1C `FileAnalysis` — resolve
-  `ModuleReference.source`/`ModuleExport.source` to files, classify internal
-  vs. external, build `DependencyEdge`s and detect `DependencyCycle`s, using
-  the TS Compiler API as the single engine.
 - **Phase 1E:** Git analysis (commit count, churn, last modification,
   contributors, recent activity) — efficient batch `git` operations.
 - **Findings / Hotspots:** deterministic rules over the computed model.
@@ -411,10 +465,10 @@ TypeScript Compiler API (see §10).
 
 ## 16. Current Status Summary
 
-- Phases 1A, 1B and 1C are **complete and verified**.
-- 97 tests pass (32 previous + 65 new analyzer tests);
+- Phases 1A, 1B, 1C and 1D are **complete and verified**.
+- 129 tests pass (97 previous + 32 new dependency tests);
   build/typecheck/lint/format/CLI smoke all pass.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
-- **Next task:** Phase 1D, Dependency Graph (not started).
+- **Next task:** Phase 1E, Git Analysis (not started).
 - **Blockers:** none.

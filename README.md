@@ -10,25 +10,25 @@ When an AI agent works in an unfamiliar repository, it typically has to rediscov
 
 The project follows a **deterministic-first** philosophy: repository facts (structure, dependencies, cycles, complexity, churn) are computed by reproducible, testable code — never by an LLM. AI reasoning is a potential future layer that can explain or prioritize the deterministic output, but it is never the source of truth. This is not a generic file-search tool, not a RAG wrapper, and not an AI code generator.
 
-> **Status: early development.** Codebase Doctor is under active construction. The current implementation covers repository discovery and per-file TypeScript/JavaScript analysis; dependency graphs, Git analysis, and MCP are planned but not yet built.
+> **Status: early development.** Codebase Doctor is under active construction. The current implementation covers repository discovery, per-file TypeScript/JavaScript analysis, and a repository-level dependency graph; Git analysis, findings, and MCP are planned but not yet built.
 
 ## Current Status
 
-The project is developed in phases. The current implementation provides **repository discovery** (Phase 1B) and **TypeScript/JavaScript analysis** (Phase 1C) on a strict TypeScript foundation (Phase 1A).
+The project is developed in phases. The current implementation provides **repository discovery** (Phase 1B), **TypeScript/JavaScript analysis** (Phase 1C), and a **dependency graph** (Phase 1D) on a strict TypeScript foundation (Phase 1A).
 
 | Phase | Status |
 |---|---|
 | Phase 1A — Foundation | ✅ Complete |
 | Phase 1B — Repository Discovery | ✅ Complete |
 | Phase 1C — TypeScript/JavaScript Analysis | ✅ Complete |
-| Phase 1D — Dependency Graph | ⬜ Not Started |
+| Phase 1D — Dependency Graph | ✅ Complete |
 | Phase 1E — Git Analysis | ⬜ Not Started |
 
 Later phases (Findings/Hotspots, MCP Server, AI Reasoning Layer, Change Validation) are planned but not yet started. See [Development Roadmap](#development-roadmap) below.
 
 ## Architecture
 
-The current pipeline computes repository structure in discrete layers. The scanner and the TypeScript/JavaScript analyzer are implemented today; the dependency graph and everything downstream is planned.
+The current pipeline computes repository structure in discrete layers. The scanner, the TypeScript/JavaScript analyzer, and the dependency graph are implemented today; Git analysis and everything downstream is planned.
 
 ```
 Repository
@@ -37,7 +37,9 @@ Repository Discovery (IMPLEMENTED)
     ↓
 Language Analyzer: TS/TSX/JS/JSX (IMPLEMENTED — per-file FileAnalysis)
     ↓
-Dependency Graph, Git History (PLANNED)
+Dependency Graph (IMPLEMENTED — resolution, edges, cycles)
+    ↓
+Git History (PLANNED)
     ↓
 MCP Server (PLANNED — not yet built)
     ↓
@@ -47,15 +49,15 @@ AI Coding Agents
 **Current (implemented):**
 
 - **Scanner** (`src/scanner`) — walks a repository tree and produces deterministic, per-file metadata: relative POSIX path, size, line count, language, test/config classification. Gitignore-aware, symlink-safe, memory-efficient.
-- **TypeScript/JavaScript analyzer** (`src/analyzers`) — parses TS/TSX/JS/JSX with the TypeScript Compiler API and produces a deterministic `FileAnalysis` per file: module references (imports — static, type-only, side-effect, dynamic, CommonJS `require()`), exports (functions, classes, constants, types, interfaces, enums, namespaces; named/aliased/type re-exports; default exports), function and class names, and cyclomatic complexity. Syntax errors surface as structured `FileParseError` rather than crashing a scan. Import resolution and dependency-graph building are deliberately deferred.
+- **TypeScript/JavaScript analyzer** (`src/analyzers`) — parses TS/TSX/JS/JSX with the TypeScript Compiler API and produces a deterministic `FileAnalysis` per file: module references (imports — static, type-only, side-effect, dynamic, CommonJS `require()`), exports (functions, classes, constants, types, interfaces, enums, namespaces; named/aliased/type re-exports; default exports), function and class names, and cyclomatic complexity. Syntax errors surface as structured `FileParseError` rather than crashing a scan.
+- **Dependency graph** (`src/dependencies`) — repository-aware module resolution via the TypeScript Compiler API (honoring `tsconfig.json` `baseUrl`/`paths`), classification into internal/external/unresolved, a deterministic `DependencyGraph` of weighted edges, and cycle detection (Tarjan SCC). Re-exports and CommonJS/dynamic/type-only imports participate.
 
 **Foundation present (types only):**
 
-- **Domain model** (`src/types`) — the shared vocabulary for the intended architecture (modules, dependencies, findings, hotspots, scan results). These types are defined and consumed by the scanner and analyzer; the analysis layers that fully populate them are planned.
+- **Domain model** (`src/types`) — the shared vocabulary for the intended architecture (modules, dependencies, scan results). These types are defined and consumed by the scanner, analyzer, and dependency-graph layer; the layers that fully populate them are planned (Git, findings, hotspots).
 
 **Planned (not yet built):**
 
-- **Dependency graph** and circular-dependency detection.
 - **Git history** analysis (churn, contributors, recent activity).
 - **MCP server** — the first-class interface for exposing this intelligence to coding agents.
 - **AI reasoning layer** — optional explanations built on top of the deterministic data.
@@ -80,6 +82,11 @@ Currently implemented:
 - **Export extraction** — functions, classes, constants, types, interfaces, enums, namespaces; local, aliased, type-only, and namespace re-exports; and default exports (named and anonymous).
 - **Function & class extraction** — declared function names (including nested scopes and named expressions) and class names; arrows/anonymous omitted; class methods excluded from the function list.
 - **Cyclomatic complexity** — deterministic McCabe metric (`1 + decision points` across `if`, loops, `switch` cases, ternaries, `&&`/`||`, `catch`).
+- **Module resolution** — repository-aware resolution via the TypeScript Compiler API: relative, extensionless, parent-relative, TSX/JS/JSX, directory/index, and `tsconfig` `paths` aliases.
+- **Internal/external/unresolved classification** — each dependency is classified where it actually resolves; unresolved references are retained, never silently dropped.
+- **Dependency graph** — deterministic `DependencyGraph` of nodes and weighted, typed edges (`static`/`type-only`/`dynamic`/`commonjs`/`side-effect`), with stable ordering.
+- **Re-export handling** — `export {x} from`, `export * from`, and `export * as ns` become the correct module-level edges.
+- **Cycle detection** — deterministic (Tarjan SCC) detection of simple, longer, multiple, and self-cycles, each reported once.
 - **CLI integration** — a `codebase-doctor scan [path]` command runs discovery and prints a human-readable summary.
 
 ## Technology Stack
@@ -89,7 +96,7 @@ From `package.json` and project configuration:
 - **Language:** TypeScript (strict), ESM (`module: NodeNext`)
 - **Runtime:** Node.js ≥ 20
 - **Compiler config:** `strict`, `isolatedDeclarations`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`
-- **Runtime dependencies:** [`commander`](https://www.npmjs.com/package/commander) (CLI), [`ignore`](https://www.npmjs.com/package/ignore) (gitignore semantics)
+- **Runtime dependencies:** [`commander`](https://www.npmjs.com/package/commander) (CLI), [`ignore`](https://www.npmjs.com/package/ignore) (gitignore semantics), `typescript` (analysis engine)
 - **Dev tooling:** Vitest (tests), ESLint 9 flat config + `typescript-eslint` (linting), Prettier (formatting)
 
 ## Installation
@@ -178,11 +185,13 @@ Currently tested:
 - **Analyzer functions & classes** (`test/analyzer/symbols.test.ts`) — declared/nested/named-expression functions, arrow/anonymous handling, method exclusion, class declarations/abstract/expressions.
 - **Analyzer complexity** (`test/analyzer/complexity.test.ts`) — baseline, `if`, loops, `switch` cases, ternary, logical ops, `catch`, nested aggregation, determinism.
 - **Analyzer languages & edge cases** (`test/analyzer/languages.test.ts`) — TS/TSX/JS/JSX, empty/comments-only source, syntax errors, unsupported extensions, duplicate imports, unusual-but-valid syntax, determinism.
+- **Dependency graph** (`test/dependencies/graph.test.ts`) — relative/parent/extensionless resolution, TSX/JS/JSX, index/dir, external + scoped packages, `require()`, dynamic + type-only imports, re-exports, export-star, path aliases, unresolved (relative + package), boundary safety, duplicate collapse, deterministic ordering, mixed internal/external, nested structure.
+- **Cycle detection** (`test/dependencies/cycles.test.ts`) — simple, longer, multiple, and self-cycles; deterministic order; stable equivalent input; diamond graphs produce no false cycles.
 - **Paths & detection** (`test/scanner/paths.test.ts`) — POSIX path normalization, relative-path computation, test/config file detection.
 - **Error handling** (`test/scanner/errors.test.ts`) — structured errors for missing/file paths.
 - **Types & CLI** (`test/unit/`) — domain-model shape and CLI command registration.
 
-**Latest verified result:** 97 tests passing across 10 files (`npm run test`).
+**Latest verified result:** 129 tests passing across 12 files (`npm run test`).
 
 > Coverage thresholds are configured in `vitest.config.ts`, but coverage has not yet been run (the coverage provider is not installed) and no coverage percentage is claimed.
 
@@ -191,7 +200,7 @@ Currently tested:
 Planned phases:
 
 - **Phase 1C — TypeScript/JavaScript Analysis** — ✅ Complete. Parses TS/TSX/JS/JSX via the TypeScript Compiler API to extract imports, exports, functions, classes, and cyclomatic complexity.
-- **Phase 1D — Dependency Graph** — module relationships and circular-dependency detection, built on the same TypeScript compiler AST used in Phase 1C.
+- **Phase 1D — Dependency Graph** — ✅ Complete. Repository-aware module resolution, internal/external/unresolved classification, a deterministic `DependencyGraph` of weighted edges, and cycle detection, all on the same TypeScript compiler AST used in Phase 1C.
 - **Phase 1E — Git Analysis** — commit counts, file churn, contributors, and recent activity.
 - **Findings / Hotspots** — deterministic rules over the computed model to surface risk and debt.
 - **MCP Server** — the first-class interface through which AI coding agents query the intelligence.
