@@ -95,17 +95,21 @@ Stable project facts useful to future Claude sessions:
 - **Lint/format:** ESLint 9 (flat config) + Prettier.
 - **Runtime deps:** `commander` (CLI), `ignore` (gitignore semantics),
   `typescript` (canonical analysis engine — Phase 1C/1D), `git` CLI
-  (Phase 1E, invoked via `child_process.execFile`, no library).
+  (Phase 1E, invoked via `child_process.execFile`, no library),
+  `@modelcontextprotocol/sdk` (MCP server — Phase 1H; zod is a transitive
+  dependency used for tool input schemas).
 - **Source layout:** `src/engine.ts` (canonical `ScanResult` producer), `src/types`
   (domain model), `src/scanner` (discovery), `src/analyzers` (TypeScript/
   JavaScript analyzer), `src/dependencies` (dependency graph + cycle detection),
   `src/git` (Git analysis), `src/findings` (deterministic rules + hotspots),
+  `src/mcp` (MCP server adapter — `scan_repository` tool + stdio transport),
   `src/utils`, `src/cli.ts` (presentation only).
 - **The repository is a Git repository**, on branch `master`, with
   `origin` at `https://github.com/jordan-chris191/codebase-doctor.git`.
 - Phases 1A (Foundation), 1B (Repository Discovery), 1C (TypeScript/JavaScript
-  Analysis), 1D (Dependency Graph), 1E (Git Analysis), Findings / Hotspots, and
-  CLI polish are COMPLETE. The next phase is the MCP Server — not yet started.
+  Analysis), 1D (Dependency Graph), 1E (Git Analysis), Findings / Hotspots,
+  CLI polish, and MCP Server (foundation + `scan_repository`) are COMPLETE.
+  The next task is expanding the MCP tool set — not yet started.
 
 For a detailed technical record of what has been built, decided, and
 verified, see REPORT.md.

@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**CLI polish**
+**MCP Server**
 
 Status: **COMPLETE** (verified)
 
@@ -11,12 +11,14 @@ Status: **COMPLETE** (verified)
 ## Current Status
 
 - Phases 1A (Foundation), 1B (Repository Discovery), 1C (TypeScript/JavaScript
-  Analysis), 1D (Dependency Graph), 1E (Git Analysis), Findings / Hotspots and
-  CLI polish are **COMPLETE** and verified.
+  Analysis), 1D (Dependency Graph), 1E (Git Analysis), Findings / Hotspots,
+  CLI polish, and MCP Server (initial tool: `scan_repository`) are
+  **COMPLETE** and verified.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
-- The next phase (MCP Server) has **not** started.
+- The next task is to expand the MCP tool set (e.g. add additional tools
+  such as `get_architecture`, `get_findings`, etc.).
 
 ---
 
@@ -309,6 +311,47 @@ Implemented:
 **Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
 no coverage percentage claimed.
 
+### MCP Server
+
+**Status: COMPLETE**
+
+Implemented:
+
+- **MCP server adapter** (`src/mcp/server.ts`): `createMcpServer()` factory
+  creates a `McpServer` (from `@modelcontextprotocol/sdk@1.30.0`) with exactly
+  one tool registered: `scan_repository`. `startServer()` connects the server to
+  `StdioServerTransport` for stdio-based MCP communication. An `isMainModule()`
+  guard (mirroring `cli.ts`) ensures the server only auto-starts when invoked
+  directly (`node dist/mcp/server.js`), keeping it importable and testable.
+- **`scan_repository` tool** — takes `{ rootPath: string }` (zod v4.5.4 schema,
+  auto-converted to JSON Schema by the SDK). Calls the single canonical
+  `scanRepository(rootPath)` engine function and returns the `ScanResult`
+  serialized as JSON text. On failure, returns a structured MCP tool error
+  (`isError: true`) with a clear message — never fabricates a `ScanResult`.
+  Maps `PathNotFoundError` / `PathIsFileError` from `src/scanner/errors.js` to
+  human-readable messages.
+- **Barrel** (`src/mcp/index.ts`): re-exports `createMcpServer`, `startServer`.
+- **Module-independent** — no changes to the engine, CLI, analyzers, scanner,
+  git, findings, dependencies, or the public `src/index.ts` barrel. MCP is a
+  thin consumer only.
+- **Stdio MCP smoke test** (manual, confirmed): `initialize` handshake → server
+  reports `codebase-doctor` v0.1.0, `tools/list` → `scan_repository` listed
+  with `rootPath` string input schema; stdout clean, no corruption.
+- 6 new MCP tests (`test/mcp/server.test.ts`) using real MCP round-trip via
+  `InMemoryTransport` + `Client`; 181 tests total.
+
+**Verification:**
+
+- `npm run build` — PASS
+- `npm run typecheck` — PASS
+- `npm run test` — PASS (181 tests: 175 existing + 6 new)
+- `npm run lint` — PASS
+- `npm run format:check` — PASS
+- Stdio MCP smoke test (initialize + tools/list) — PASS
+
+**Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
+no coverage percentage claimed.
+
 ---
 
 Phase 1C acceptance criteria (all met):
@@ -344,10 +387,11 @@ Phase 1C acceptance criteria (all met):
 |---|---|
 | `npm run build` | PASS |
 | `npm run typecheck` | PASS |
-| `npm run test` | PASS (97 tests) |
+| `npm run test` | PASS (181 tests) |
 | `npm run lint` | PASS |
 | `npm run format:check` | PASS |
 | CLI `scan` smoke test | PASS |
+| MCP stdio smoke test | PASS |
 
 Coverage thresholds (80%) are configured but have **not** been run/verified
 (`@vitest/coverage-v8` is not installed — pre-existing since Phase 1A).
@@ -397,20 +441,15 @@ None.
 
 ## Next Task
 
-### MCP Server (NOT STARTED)
+### Expand MCP Tool Set (NOT STARTED)
 
-A Model Context Protocol server exposing the deterministic engine
-(`scanRepository` → `ScanResult`) as MCP tools. The engine's clean
-CLI/MCP/AI boundary from CLI polish makes MCP a thin consumer.
+The MCP server foundation and `scan_repository` tool are complete. The next
+task is to add additional MCP tools that expose finer-grained queries over the
+same canonical `ScanResult` — for example: `get_dependencies`, `get_findings`,
+`get_git_stats`, `get_architecture` — or to add client-facing configuration
+or multi-tool support.
 
-Planned objectives:
-
-- MCP tool(s): `scan` / `analyze_repository` returning the canonical
-  `ScanResult`
-- Deterministic, structured output (no AI, no re-parsing)
-- No change to the engine; MCP is a thin consumer
-
-Do NOT start the MCP Server phase until explicitly instructed.
+Do NOT start this work until explicitly instructed.
 
 ---
 
@@ -423,15 +462,39 @@ Do NOT start the MCP Server phase until explicitly instructed.
 5. Phase 1E — Git Analysis — **COMPLETE**
 6. Findings / Hotspots — **COMPLETE**
 7. CLI polish — **COMPLETE**
-8. MCP Server — **NEXT, not started**
-9. Claude Code Integration
-10. AI Reasoning Layer (optional, after deterministic core)
-11. Change Validation
-12. Optional Dashboard (explicitly out of near-term scope)
+8. MCP Server (foundation + `scan_repository`) — **COMPLETE**
+9. Expand MCP Tool Set — **NEXT, not started**
+10. Claude Code Integration
+11. AI Reasoning Layer (optional, after deterministic core)
+12. Change Validation
+13. Optional Dashboard (explicitly out of near-term scope)
 
 ---
 
 ## Session Log
+
+## 2026-09-07 (MCP Server)
+
+- Completed the MCP Server foundation (Phase 1H).
+- MCP server adapter (`src/mcp/server.ts`): `createMcpServer()` builds a
+  `McpServer` (from `@modelcontextprotocol/sdk@1.30.0`) with one tool:
+  `scan_repository`. `startServer()` connects the server to stdio transport.
+- `scan_repository` tool: takes `{ rootPath: string }` (zod v4.5.4 schema),
+  calls `scanRepository()` and returns the canonical `ScanResult` as JSON. On
+  failure, returns structured MCP tool error (`isError: true`) — never
+  fabricates a result.
+- Module: `src/mcp/` (`server.ts`, `index.ts`); no changes to `src/index.ts`,
+  engine, CLI, analyzers, or any existing module.
+- Stdio MCP smoke test confirmed: `initialize` handshake → server info +
+  `tools/list` → `scan_repository` with `rootPath` string schema; stdout clean.
+- Added 6 MCP tests (`test/mcp/server.test.ts`) using real MCP round-trip
+  via `InMemoryTransport` + `Client`; 181 tests total.
+- Build/typecheck/lint/format/stdio smoke all pass.
+- Coverage still unverified (`@vitest/coverage-v8` not installed — pre-existing).
+- Committed: `205dc4d feat(mcp): add scan_repository MCP server`.
+
+Next action:
+Expand MCP tool set when instructed. Read this file and REPORT.md first.
 
 ## 2026-09-07
 

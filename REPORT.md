@@ -95,6 +95,9 @@ src/
 │   └── interfaces.ts   #   LanguageAnalyzer, FileAnalysis
 ├── cli.ts              # CLI (commander), main-module guard
 ├── index.ts            # public barrel export
+├── mcp/                # MCP server adapter (thin consumer)
+│   ├── index.ts        #   barrel: createMcpServer, startServer
+│   └── server.ts       #   McpServer + scan_repository tool + stdio
 ├── scanner/            # Repository discovery
 │   ├── errors.ts       #   ScanError, PathNotFoundError, PathIsFileError, UnreadableFile
 │   ├── index.ts        #   barrel
@@ -270,6 +273,30 @@ test/
   (engine); the CLI formats the engine's `ScanResult`.
 - **8 CLI/engine tests** (`test/cli/`); 175 tests total.
 
+**MCP Server (Phase 1H, complete):**
+
+- **MCP server adapter** (`src/mcp/server.ts`): `createMcpServer()` builds
+  `McpServer` (from `@modelcontextprotocol/sdk@1.30.0`) and registers exactly
+  one tool: `scan_repository`. `startServer()` connects the server to
+  `StdioServerTransport` for stdio-based MCP communication. An `isMainModule()`
+  guard (mirroring `cli.ts`) ensures the server auto-starts only when invoked
+  directly, keeping it importable and testable.
+- **`scan_repository` tool** — input `{ rootPath: string }` (zod v4.5.4 schema,
+  auto-converted to JSON Schema by the SDK). Calls the single canonical
+  `scanRepository(rootPath)` and returns the serialized `ScanResult`. On
+  failure, returns a structured MCP tool error (`isError: true`) with a clear
+  message; `PathNotFoundError` / `PathIsFileError` are mapped to human-readable
+  descriptions. Never fabricates a `ScanResult`.
+- **Barrel** (`src/mcp/index.ts`): re-exports `createMcpServer`, `startServer`.
+- No changes to the engine, CLI, analyzers, scanner, git, findings,
+  dependencies, or the public `src/index.ts` barrel. MCP is a pure thin
+  consumer.
+- **Stdio MCP smoke test** (manual, confirmed): `initialize` → server info;
+  `tools/list` → `scan_repository` listed with `rootPath` string input schema;
+  stdout clean, no corruption.
+- **6 new MCP tests** (`test/mcp/server.test.ts`): real MCP round-trip via
+  `InMemoryTransport` + `Client`; 181 tests total.
+
 ## 7. Development Phases
 
 1. **Phase 1A — Foundation** — COMPLETE
@@ -279,16 +306,18 @@ test/
 5. **Phase 1E — Git Analysis** — COMPLETE
 6. **Findings / Hotspots** — COMPLETE
 7. **CLI polish** — COMPLETE
-8. **MCP Server** — NEXT, NOT STARTED
-9. **Claude Code Integration** — PLANNED
-10. **AI Reasoning Layer** — PLANNED (optional, after deterministic core)
+8. **MCP Server (foundation + `scan_repository`)** — COMPLETE
+9. **Expand MCP Tool Set** — NEXT, NOT STARTED
+10. **Claude Code Integration** — PLANNED
+11. **AI Reasoning Layer** — PLANNED (optional, after deterministic core)
 11. **Change Validation** — PLANNED
 12. **Optional Dashboard** — PLANNED (out of near-term scope)
 
 ## 8. Current Phase
 
-**CLI polish** is COMPLETE and verified. The next phase, **MCP Server**, has
-not started.
+**MCP Server (foundation + `scan_repository`)** is COMPLETE and verified. The
+next task is to expand the MCP tool set (additional tools beyond
+`scan_repository`).
 
 ## 9. Domain Model
 
@@ -406,6 +435,19 @@ future work.
 - **No second parse (Phase 1F).** The findings engine is a pure consumer of
   `DiscoveryResult` + `FileAnalysis` + `DependencyGraph` + `RepoStats`; it
   never touches the filesystem, AST, resolver, or Git again.
+- **MCP is a thin adapter (Phase 1H).** The MCP server (`src/mcp/server.ts`)
+  registers a single `scan_repository` tool that calls `scanRepository()` — the
+  canonical engine — and serializes the result. It adds no logic, re-parses
+  nothing, and is fully decoupled from the engine and CLI by design. The MCP SDK
+  (`@modelcontextprotocol/sdk@1.30.0`) provides `McpServer` + `StdioServerTransport`;
+  zod (v4.5.4, transitive dep of the SDK) supplies the input schema, auto-converted
+  to JSON Schema by the SDK. `createMcpServer()` is a pure factory; `startServer()`
+  is guarded by `isMainModule()` so the module stays importable and testable.
+- **MCP tool errors, never fabricated results.** The `scan_repository` handler
+  catches scanner errors (`PathNotFoundError`, `PathIsFileError`) and any other
+  engine failure, and returns a structured MCP tool error (`isError: true`) with
+  a clear message. It never fabricates or partially constructs a `ScanResult` —
+  a partial result would be worse than a clear error.
 
 ## 11. Problems Encountered and Solutions
 
@@ -455,7 +497,7 @@ future work.
 
 ## 12. Testing and Verification
 
-- **175 tests** across 15 files:
+- **181 tests** across 16 files:
   - `test/unit/types.test.ts` (3) — LANGUAGES immutability, ScanResult schema
   - `test/unit/cli.test.ts` (2) — command registration, version
   - `test/scanner/paths.test.ts` (11) — path normalization, test/config detection
@@ -496,6 +538,10 @@ future work.
     determinism, non-Git → `stats:null`; `--json` valid-JSON parse,
     determinism, no stdout contamination (stderr clean), JSON error object,
     command regression (scan/git/findings)
+  - `test/mcp/server.test.ts` (6) — MCP round-trip via `InMemoryTransport`:
+    valid ScanResult, nonexistent path error, file-not-directory error,
+    engine integration consistency, field shape validation, engine-failure
+    never throws from `callTool`
 - **Fixture repos** built at runtime in a temp dir via
   `test/helpers/fs.ts` + `test/fixtures/kitchen-sink.ts`; cleaned up
   automatically. Analyzer tests analyze content in memory (no fixtures);
@@ -505,10 +551,11 @@ future work.
 - **Coverage** thresholds configured at 80% but not yet run/verified
   (`@vitest/coverage-v8` not installed).
 - **Verification pipeline** (all PASS as of 2026-09-07):
-  build, typecheck, test (175), lint, format:check, and CLI smoke tests
+  build, typecheck, test (181), lint, format:check, CLI smoke tests
   (`scan` human report + `--json` parsed via Node, `git`, `findings`;
   JSON repository-derived data deterministic across two runs after
-  normalizing `scanTimestamp`/`durationMs`).
+  normalizing `scanTimestamp`/`durationMs`), and MCP stdio smoke test
+  (`initialize` + `tools/list` JSON-RPC over stdin/stdout).
 
 ## 13. Dependencies
 
@@ -518,6 +565,8 @@ future work.
 - `ignore` (^7) — gitignore semantics
 - `typescript` (^5.7) — the canonical Phase 1C/1D analysis engine (moved from
   dev to runtime: the analyzer imports it and the CLI ships via `bin`)
+- `@modelcontextprotocol/sdk` (^1.30.0) — MCP server and stdio transport
+  (Phase 1H; zod is a transitive dep for schema validation)
 
 **Dev:**
 
@@ -565,20 +614,21 @@ TypeScript Compiler API (see §10).
 
 ## 15. Future Development
 
-- **MCP Server:** a Model Context Protocol server exposing the deterministic
-  engine (`scanRepository` → `ScanResult`) as MCP tools — a thin consumer of
-  the canonical result.
+- **Expand MCP Tool Set:** additional tools exposing finer-grained queries
+  over the canonical `ScanResult` (e.g. `get_dependencies`, `get_findings`,
+  `get_git_stats`, `get_architecture`), or multi-tool support.
+- **Claude Code Integration:** wire MCP server into Claude Code workflows.
 - **AI Reasoning Layer** (optional): explanation and prioritization on top
   of the deterministic data — never as the source of truth.
 - **Change Validation** — impact assessment for proposed changes.
 
 ## 16. Current Status Summary
 
-- Phases 1A, 1B, 1C, 1D, 1E, Findings / Hotspots and CLI polish are **complete
-  and verified**.
-- 175 tests pass (167 previous + 8 new CLI/engine tests);
-  build/typecheck/lint/format/CLI smoke all pass.
+- Phases 1A, 1B, 1C, 1D, 1E, Findings / Hotspots, CLI polish, and MCP Server
+  (foundation + `scan_repository`) are **complete and verified**.
+- 181 tests pass (175 previous + 6 new MCP server tests);
+  build/typecheck/lint/format/CLI smoke/MCP stdio smoke all pass.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
-- **Next task:** MCP Server (not started).
+- **Next task:** Expand MCP tool set (not started).
 - **Blockers:** none.
