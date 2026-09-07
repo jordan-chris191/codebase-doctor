@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 1B — Repository Discovery**
+**Phase 1C — TypeScript/JavaScript Analysis**
 
 Status: **COMPLETE** (verified)
 
@@ -10,12 +10,12 @@ Status: **COMPLETE** (verified)
 
 ## Current Status
 
-- Phases 1A (Foundation) and 1B (Repository Discovery) are **COMPLETE** and
-  verified.
+- Phases 1A (Foundation), 1B (Repository Discovery) and 1C
+  (TypeScript/JavaScript Analysis) are **COMPLETE** and verified.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
-- The next phase (1C) has **not** started.
+- The next phase (1D — Dependency Graph) has **not** started.
 
 ---
 
@@ -67,23 +67,102 @@ Implemented:
 - CLI smoke test (scan `D:\Projects\CodeBaseDoctor`) — PASS
   (`41 files, 12 dirs, 36ms`)
 
+### Phase 1C — TypeScript/JavaScript Analysis
+
+**Status: COMPLETE**
+
+Implemented:
+
+- Canonical analyzer using the **TypeScript Compiler API** directly
+  (`src/analyzers/typescript.ts`); `typescript` moved to runtime dependencies.
+- `TypeScriptAnalyzer implements LanguageAnalyzer`; `createTypeScriptAnalyzer()`
+  factory; `canHandle` reuses `languageForPath()`.
+- TS/TSX/JS/JSX via per-extension `ScriptKind` (`src/analyzers/script-kind.ts`).
+- Import/reference extraction (`src/analyzers/imports.ts`): static, type-only,
+  side-effect, dynamic (`import()`), `import type` edges, recognized CommonJS
+  `require()`, and `export … from "…"` references — specifiers captured
+  exactly, never resolved (resolution is Phase 1D).
+- Export extraction (`src/analyzers/exports.ts`) into `ModuleExport`: functions,
+  classes, constants, types, interfaces, enums, namespaces, named/aliased
+  re-exports (`export { a as b }`), `export type { … } from`, `export * as ns`,
+  `export * from` (reference only), and default exports (named, anonymous).
+- Function/class name extraction (`src/analyzers/symbols.ts`): declared
+  functions + nested scopes, named function expressions; class declarations;
+  arrows/anonymous skipped; class methods excluded (recorded for complexity).
+- Deterministic cyclomatic complexity (`src/analyzers/complexity.ts`):
+  `1 + decision points` over `if`, loops, `switch` cases, ternary,
+  `&&`/`||`, `catch`.
+- `FileAnalysis` assembly parses once and derives all fields from one AST;
+  deterministic `summary` derived from the same data
+  (`src/analyzers/summary.ts`).
+- Syntax errors → existing `FileParseError` (per-file, never crashes a scan);
+  unsupported extensions rejected before parsing; runtime internal API
+  (`parseDiagnostics`) read via a typed read.
+- 65 focused analyzer tests (`test/analyzer/`) covering imports, exports,
+  functions, classes, complexity, all four languages, and edge cases.
+
+Domain model additions (`src/types/module.ts`), both additive:
+`ExportKind` gained `"namespace"`; `ModuleExport` gained optional `source`
+(present iff `isReExport`) so Phase 1D can build export edges without a second
+parse.
+
+**Verification:**
+
+- `npm run build` — PASS
+- `npm run typecheck` — PASS
+- `npm run test` — PASS (97 tests: 32 existing + 65 new)
+- `npm run lint` — PASS
+- `npm run format:check` — PASS
+- CLI smoke test (scan `D:\Projects\CodeBaseDoctor`) — PASS
+  (`57 files, 15 dirs, (documentation: 6, config: 7, unknown: 1, source: 43)`)
+- Analyzer self-analysis (analyzed `imports.ts`, `exports.ts` directly) — PASS
+
+**Coverage (not verified):** `@vitest/coverage-v8` is not installed, so the
+80% thresholds were never run. This is a pre-existing gap from Phase 1A, not
+introduced by 1C; no coverage percentage is claimed.
+
 ---
 
-## Current Phase Objective
+Phase 1C acceptance criteria (all met):
 
-Phase 1B is complete. No in-progress phase objective remains.
+- [x] TypeScript Compiler API used as the canonical parser
+- [x] TS/TSX/JS/JSX supported
+- [x] Imports extracted (static)
+- [x] Type-only imports distinguished
+- [x] Side-effect imports distinguished
+- [x] Dynamic imports distinguished
+- [x] CommonJS `require()` recognized appropriately
+- [x] Exports extracted (all `ExportKind`s)
+- [x] Functions extracted
+- [x] Classes extracted
+- [x] Deterministic complexity calculated
+- [x] `FileAnalysis` correctly populated
+- [x] Analyzer errors handled per the existing contract
+- [x] Analyzer integrated without coupling to CLI/MCP
+- [x] Phase 1D dependency graph NOT implemented
+- [x] Focused analyzer tests exist (65 added)
+- [x] Existing tests continue to pass
+- [x] Typecheck passes
+- [x] Lint passes
+- [x] Build passes
+- [x] Format check passes
+- [x] Documentation accurately reflects the implementation
 
 ---
 
-## Completed Work
+## Verification Status
 
-See "Completed Phases" above. Both 1A and 1B are done.
+| Check | Status |
+|---|---|
+| `npm run build` | PASS |
+| `npm run typecheck` | PASS |
+| `npm run test` | PASS (97 tests) |
+| `npm run lint` | PASS |
+| `npm run format:check` | PASS |
+| CLI `scan` smoke test | PASS |
 
----
-
-## Remaining Work
-
-Phase 1C — TypeScript/JavaScript Analysis, **not started**.
+Coverage thresholds (80%) are configured but have **not** been run/verified
+(`@vitest/coverage-v8` is not installed — pre-existing since Phase 1A).
 
 ---
 
@@ -130,23 +209,24 @@ None.
 
 ## Next Task
 
-### Phase 1C — TypeScript/JavaScript Analysis (NOT STARTED)
+### Phase 1D — Dependency Graph (NOT STARTED)
 
-Evaluate and select an AST/parser approach for TS/TSX/JS/JSX (ts-morph vs.
-dependency-cruiser vs. the TypeScript compiler API) before implementing.
-Per the single-source-of-truth constraint, resolve this decisively.
+Build the dependency graph over the per-file `FileAnalysis` produced by
+Phase 1C, using the **TypeScript Compiler API** as the single source of truth
+(the Phase 1C decision). `ModuleReference`/`ModuleExport` already capture
+sources, import types, and export edges (including `source` on re-exports).
 
 Planned objectives:
 
-- Parse TS/TSX/JS/JSX source files
-- Extract imports (static, type-only, dynamic where practical)
-- Extract exports (functions, classes, constants, enums, interfaces, types)
-- Extract function and class names
-- Compute basic cyclomatic complexity
-- Enrich scanned files with source-level metadata
-- Produce deterministic module information (`FileAnalysis`)
+- Resolve `ModuleReference.source` / `ModuleExport.source` to concrete files
+  (relative specifiers → files; bare specifiers → `external` packages)
+- Construct `DependencyEdge` nodes and edges (`internal | external |
+  type-only | dynamic | commonjs`)
+- Detect `DependencyCycle`s using a cycle-detection walk
+- Handle `export * from` and alias/namespace re-export indirection
+- Remain deterministic and single-source (no competing resolver)
 
-Do NOT start Phase 1C until explicitly instructed.
+Do NOT start Phase 1D until explicitly instructed.
 
 ---
 
@@ -154,9 +234,8 @@ Do NOT start Phase 1C until explicitly instructed.
 
 1. Phase 1A — Foundation — **COMPLETE**
 2. Phase 1B — Repository Discovery — **COMPLETE**
-3. Phase 1C — TS/JS Analysis — **NEXT, not started**
-4. Phase 1D — Dependency Graph (single source of truth: evaluate ts-morph
-   vs. dependency-cruiser decisively)
+3. Phase 1C — TypeScript/JavaScript Analysis — **COMPLETE**
+4. Phase 1D — Dependency Graph — **NEXT, not started**
 5. Phase 1E — Git Analysis
 6. Findings / Hotspots
 7. CLI polish
@@ -169,6 +248,17 @@ Do NOT start Phase 1C until explicitly instructed.
 ---
 
 ## Session Log
+
+## 2026-09-07
+
+- Completed Phase 1C (TypeScript/JavaScript Analysis).
+- Chose the TypeScript Compiler API as the canonical AST/analysis engine.
+- Added 65 analyzer tests (97 total passing); build/typecheck/lint/format PASS.
+- Coverage still unverified (`@vitest/coverage-v8` not installed).
+
+Next action:
+Begin Phase 1D (Dependency Graph) when instructed. Read this file and
+REPORT.md first.
 
 ## 2026-09-06
 

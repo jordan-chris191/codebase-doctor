@@ -22,10 +22,24 @@ export interface ModuleExport {
   readonly isDefault: boolean;
   /** Whether it is a re-export of a symbol from another module. */
   readonly isReExport: boolean;
+  /**
+   * Present iff `isReExport`. The exact source string of the module the
+   * exported name is re-exported from (e.g. `"./foo"`), or `null` for a
+   * local re-export (`export { foo }`), which has no dependency target here.
+   * Retained so Phase 1D can build export edges without a second parse.
+   */
+  readonly source: string | null;
 }
 
-/** The kinds of symbols a module can export. */
-export type ExportKind = "function" | "class" | "type" | "constant" | "enum" | "interface";
+/**
+ * The kinds of symbols a module can export.
+ *
+ * `namespace` covers `export namespace` (and `export import X = ...`, which
+ * TS parses as an alias namespace). The existing six kinds plus `namespace`
+ * represent every meaningful `export` form the analyzer produces.
+ */
+export type ExportKind =
+  "function" | "class" | "type" | "constant" | "enum" | "interface" | "namespace";
 
 /** A module's relationship to other modules. */
 export interface ModuleReference {

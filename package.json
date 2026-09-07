@@ -49,12 +49,12 @@
     "eslint": "^9.0.0",
     "prettier": "^3.0.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.7.0",
     "typescript-eslint": "^8.0.0",
     "vitest": "^3.0.0"
   },
   "dependencies": {
     "commander": "^13.0.0",
-    "ignore": "^7.0.8"
+    "ignore": "^7.0.8",
+    "typescript": "^5.7.0"
   }
 }
