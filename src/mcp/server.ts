@@ -14,6 +14,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { scanRepository } from "../engine.js";
 import { PathIsFileError, PathNotFoundError } from "../scanner/errors.js";
+import { projectScanSummary } from "./projection.js";
 
 /** Server identity reported during the MCP handshake. */
 const SERVER_NAME = "codebase-doctor";
@@ -54,17 +55,20 @@ export function createMcpServer(): McpServer {
     "scan_repository",
     {
       description:
-        "Deterministically analyze a repository and return the canonical ScanResult (structure, TS/JS analysis, dependency graph, Git stats, findings, hotspots).",
+        "Deterministically analyze a repository and return a compact, agent-oriented summary of its architecture: file/language/dependency counts, dependency cycles, hotspots, notable findings, and the highest-risk files (complexity, churn, fan-in/out). The full canonical ScanResult is intentionally NOT returned; it is projected into this smaller summary so the response stays within MCP tool-result size limits.",
       inputSchema: {
         rootPath: z.string().describe("Absolute path to the repository root."),
       },
     },
     async ({ rootPath }) => {
       try {
-        // Single engine call; the result is a plain serializable object.
+        // Single engine call produces the canonical ScanResult; the MCP
+        // presentation layer then projects it into a compact summary for
+        // transport. The engine's full result remains the source of truth.
         const result = await scanRepository(rootPath);
+        const summary = projectScanSummary(result);
         return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
+          content: [{ type: "text", text: JSON.stringify(summary) }],
         };
       } catch (err) {
         // Structured MCP tool error; never fabricate a ScanResult.

@@ -61,7 +61,7 @@ AI Coding Agents
 - **Git analysis** (`src/git`) — deterministic repository-level Git facts via the Git CLI: commit count, first/last commit dates, contributors, per-file churn, and bounded recent activity. Batch commands (`--format`, `--numstat`), no per-file `git` processes, POSIX-normalized paths. Documented policies for merges, renames, and binary files.
 - **Findings / Hotspots** (`src/findings`) — a deterministic rules engine over the Phase 1A–1E outputs: explicit thresholds for high complexity, high churn, high fan-in/out, dependency cycles, and large+complex files. Each finding carries the rule ID, severity, measured value, threshold, and evidence; hotspots expose raw signals (complexity, churn, fan-in/out, cycle) plus contributing findings, with no opaque composite score. Never AI.
 - **Engine + ScanResult** (`src/engine.ts`) — `scanRepository(rootPath)` runs the full deterministic pipeline once and aggregates everything into the canonical `ScanResult` (languages, files, modules, dependencies, cycles, Git stats, findings, hotspots). Single source of truth for the CLI and MCP. No re-scan/re-parse/re-Git.
-- **MCP Server** (`src/mcp/`) — an MCP server foundation using `@modelcontextprotocol/sdk` over stdio, exposing one tool: `scan_repository`. Calls the canonical engine and returns the `ScanResult` as JSON. A thin adapter — no engine, scanner, AST, dependency, Git, or findings logic is duplicated. Runs as `node dist/mcp/server.js`.
+- **MCP Server** (`src/mcp/`) — an MCP server foundation using `@modelcontextprotocol/sdk` over stdio, exposing one tool: `scan_repository`. Calls the canonical engine and returns a compact, agent-oriented `ScanSummary` (projected from the full `ScanResult`, which stays deterministic and is the single source of truth) so the response fits within MCP tool-result size limits even on large repositories. A thin adapter — no engine, scanner, AST, dependency, Git, or findings logic is duplicated. Runs as `node dist/mcp/server.js`.
 - **CLI** (`src/cli.ts`) — `scan` (human report or `--json`), `git`, `findings` (`--json`). JSON goes to stdout only; diagnostics to stderr; deterministic output.
 
 **Foundation present (types only):**
@@ -104,7 +104,7 @@ Currently implemented:
 - **Expliable hotspots** — a file flagged by ≥2 priority rules is a hotspot that exposes raw `signals` (complexity, churn, fan-in/out, cycle) and contributing findings; no opaque composite score, no AI.
 - **CLI integration** — `codebase-doctor scan [path]` runs the full pipeline and prints a concise human-readable report; `codebase-doctor git [path] [--recent N]` runs Git analysis; `codebase-doctor findings [path] [--recent N]` runs findings + hotspots.
 - **`--json` output** — `codebase-doctor scan --json` and `codebase-doctor findings --json` emit stable, deterministic JSON (the canonical `ScanResult`) on stdout; diagnostics go to stderr; JSON-mode errors are machine-readable.
-- **MCP server** — `node dist/mcp/server.js` starts an MCP server on stdio, exposing `scan_repository` (takes `{ rootPath: string }`, returns the canonical `ScanResult` as JSON). Thin adapter over the engine; no duplicated logic. Uses `@modelcontextprotocol/sdk` with stdio transport.
+- **MCP server** — `node dist/mcp/server.js` starts an MCP server on stdio, exposing `scan_repository` (takes `{ rootPath: string }`, returns a compact `ScanSummary` — counts, languages, dependency totals, cycles, hotspots, notable findings, highest-risk files, and a bounded Git summary — projected from the canonical `ScanResult`). Thin adapter over the engine; no duplicated logic. Uses `@modelcontextprotocol/sdk` with stdio transport.
 
 ## Technology Stack
 
@@ -162,7 +162,10 @@ node dist/cli.js --version
 ### MCP server
 
 Start the MCP server on stdio (exposes the `scan_repository` tool, which takes
-`{ rootPath: string }` and returns the canonical `ScanResult` as JSON):
+`{ rootPath: string }` and returns a compact `ScanSummary` — repository counts,
+language breakdown, dependency totals, cycles, hotspots, notable findings,
+highest-risk files, and a bounded Git summary — projected from the full
+canonical `ScanResult`):
 
 ```bash
 node dist/mcp/server.js
@@ -232,13 +235,13 @@ Currently tested:
 - **Cycle detection** (`test/dependencies/cycles.test.ts`) — simple, longer, multiple, and self-cycles; deterministic order; stable equivalent input; diamond graphs produce no false cycles.
 - **Git analysis** (`test/git/analysis.test.ts`) — multi-commit, single-commit, empty repo, non-Git dir, multiple contributors, add/modify/delete, multi-file commit, rename policy, recent-activity limit/order, determinism, POSIX path normalization, binary churn, merge policy. Fixtures use real temp Git repositories with local identity and fixed commit dates (never the user's global Git config or wall-clock).
 - **Findings** (`test/findings/rules.test.ts`) — complexity/churn/fan-in/fan-out below/boundary/above thresholds, cycles (none/self/multi/multiple), large+complex files, hotspots (no/one/multiple signals, deterministic aggregation), determinism (repeated analysis identical), empty repos (no fabricated findings), and malformed upstream (missing analysis → no misleading findings).
-- **MCP server** (`test/mcp/server.test.ts`) — real MCP round-trip via `InMemoryTransport` + `Client`: valid ScanResult for a valid `rootPath`, structured tool errors for nonexistent path and file-not-directory, engine-integration consistency, expected field shapes, and engine-failure never throws from `callTool`.
+- **MCP server** (`test/mcp/server.test.ts`) — real MCP round-trip via `InMemoryTransport` + `Client`: compact `ScanSummary` for a valid `rootPath`, structured tool errors for nonexistent path and file-not-directory, counts consistent with `scanRepository()` directly, compact field shapes, engine-failure never throws from `callTool`, a materially smaller response than the full `ScanResult`, preserved architectural signals, a bounded Git summary, and projection determinism.
 - **Engine & CLI** (`test/cli/engine.test.ts`) — `scanRepository` aggregates the canonical `ScanResult`; per-run determinism; non-Git → `stats:null`; `--json` parses as valid JSON, is deterministic, keeps stdout clean (no headings/ANSI; stderr empty), emits structured JSON errors, and preserves existing `scan`/`git`/`findings` commands.
 - **Paths & detection** (`test/scanner/paths.test.ts`) — POSIX path normalization, relative-path computation, test/config file detection.
 - **Error handling** (`test/scanner/errors.test.ts`) — structured errors for missing/file paths.
 - **Types & CLI** (`test/unit/`) — domain-model shape and CLI command registration.
 
-**Latest verified result:** 181 tests passing across 16 files (`npm run test`).
+**Latest verified result:** 185 tests passing across 16 files (`npm run test`).
 
 > Coverage thresholds are configured in `vitest.config.ts`, but coverage has not yet been run (the coverage provider is not installed) and no coverage percentage is claimed.
 
@@ -251,7 +254,7 @@ Planned phases:
 - **Phase 1E — Git Analysis** — ✅ Complete. Deterministic Git history facts (commit count, first/last dates, contributors, per-file churn, recent activity) via batch Git CLI commands, with documented merge/rename/binary policies.
 - **Findings / Hotspots** — ✅ Complete. A deterministic rules engine over structure + complexity + Git churn, with explicit thresholds and explainable, signal-exposing hotspots.
 - **CLI polish** — ✅ Complete. A canonical `ScanResult` engine (`scanRepository`), a human-readable `scan` report, and stable `--json` output for `scan`/`findings`.
-- **MCP Server (foundation + `scan_repository`)** — ✅ Complete. An MCP server over stdio exposing the canonical engine as a `scan_repository` tool (thin adapter, no duplicated logic).
+- **MCP Server (foundation + `scan_repository`)** — ✅ Complete. An MCP server over stdio exposing the canonical engine as a `scan_repository` tool (thin adapter, no duplicated logic); the tool now returns a compact `ScanSummary` projected from the full `ScanResult` so responses stay within MCP size limits on large repos.
 - **Expand MCP Tool Set** — next planned phase: additional tools exposing finer-grained queries over the canonical `ScanResult`.
 
 Further planned work: an AI reasoning layer (optional explanations on top of the deterministic core), change validation (impact assessment for proposed edits), and an optional dashboard — all explicitly out of the near-term scope.

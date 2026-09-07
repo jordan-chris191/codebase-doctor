@@ -14,11 +14,20 @@ Status: **COMPLETE** (verified)
   Analysis), 1D (Dependency Graph), 1E (Git Analysis), Findings / Hotspots,
   CLI polish, and MCP Server (initial tool: `scan_repository`) are
   **COMPLETE** and verified.
+- The MCP `scan_repository` tool now returns a **compact, agent-oriented
+  `ScanSummary`** (from `projectScanSummary` in `src/mcp/projection.ts`)
+  instead of the full canonical `ScanResult`. This fixes a dogfooding issue
+  where large repos produced ~300k-char / ~75k-token responses that exceeded
+  the MCP tool-result size cap. The full `ScanResult` is unchanged and
+  remains the single source of truth; only the MCP presentation layer
+  projects it. CLI and scanner behavior are unchanged.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
 - The next task is to expand the MCP tool set (e.g. add additional tools
-  such as `get_architecture`, `get_findings`, etc.).
+  such as `get_architecture`, `get_findings`, etc.), and/or add a
+  `get_file_details` / pageable tool that returns a bounded slice of the
+  full `ScanResult` on demand.
 
 ---
 
@@ -472,6 +481,28 @@ Do NOT start this work until explicitly instructed.
 ---
 
 ## Session Log
+
+## 2026-09-07 (MCP compact response)
+
+- Refactored the MCP `scan_repository` tool to return a compact, agent-oriented
+  `ScanSummary` instead of the full canonical `ScanResult`.
+- Root cause: the MCP layer serialized the entire `ScanResult`; on real repos
+  the `dependencies`/`modules`/`stats`/`files` sections (which scale linearly
+  with repo size) pushed responses past the MCP tool-result cap (~300k chars /
+  ~75k tokens on a large repo). The engine was never the problem.
+- Added `src/mcp/projection.ts` (`projectScanSummary`) + `src/mcp/summary.ts`
+  (`ScanSummary`). `scan_repository` now serializes the summary. Engine,
+  scanner, CLI, domain types unchanged; full `ScanResult` still the source of
+  truth. Deterministic, no AI, repo-relative POSIX paths for cycles/unresolved.
+- Measured on this repo: 120,853 → 13,232 chars (89.1% / 9.1× reduction).
+- MCP tests: 6 → 10 (updated 3 to the new shape; added size-reduction <10%,
+  signal-preservation, Git-summary, and determinism tests). 185 tests total.
+- Build/typecheck/lint/format/CLI smoke/MCP stdio round-trip all PASS.
+
+Next action:
+Expand the MCP tool set (add finer-grained tools over the ScanResult, or a
+`get_file_details`/pageable slice tool) when instructed. Read this file and
+REPORT.md first.
 
 ## 2026-09-07 (MCP Server)
 

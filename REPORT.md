@@ -283,8 +283,9 @@ test/
   directly, keeping it importable and testable.
 - **`scan_repository` tool** — input `{ rootPath: string }` (zod v4.5.4 schema,
   auto-converted to JSON Schema by the SDK). Calls the single canonical
-  `scanRepository(rootPath)` and returns the serialized `ScanResult`. On
-  failure, returns a structured MCP tool error (`isError: true`) with a clear
+  `scanRepository(rootPath)` and returns a **compact `ScanSummary`** projected
+  from the `ScanResult` by `projectScanSummary()` (see §10). On failure,
+  returns a structured MCP tool error (`isError: true`) with a clear
   message; `PathNotFoundError` / `PathIsFileError` are mapped to human-readable
   descriptions. Never fabricates a `ScanResult`.
 - **Barrel** (`src/mcp/index.ts`): re-exports `createMcpServer`, `startServer`.
@@ -353,13 +354,10 @@ Defined in `src/types`. All are pure, readonly, dictionary-shaped types.
   and exposes explicit `signals` (complexity, churn, fanIn, fanOut, inCycle),
   contributing `findings` (ruleIds), and a deterministic `ranking` — no opaque
   composite score.
-- **`ScanResult`** (`scan.ts`) — the intended top-level scan artifact.
-  `schemaVersion: 1`. Partially realized: `DiscoveryResult` is the current
-  concrete scan output.
-
-The `ScanResult` type is broader than what discovery produces today;
-threading the full `ScanResult` through (merging analyzer + git output) is
-future work.
+- **`ScanResult`** (`scan.ts`) — the canonical top-level scan artifact
+  (`schemaVersion: 1`) produced by the engine's `scanRepository()`. It is the
+  single source of truth consumed by the CLI and (via the compact `ScanSummary`
+  projection) by MCP.
 
 ## 10. Technical Decisions
 
@@ -448,6 +446,26 @@ future work.
   engine failure, and returns a structured MCP tool error (`isError: true`) with
   a clear message. It never fabricates or partially constructs a `ScanResult` —
   a partial result would be worse than a clear error.
+- **Compact MCP projection (MCP refactor).** The `scan_repository` MCP tool
+  returns a deterministic `ScanSummary` (`projectScanSummary` in
+  `src/mcp/projection.ts`, `ScanSummary` in `src/mcp/summary.ts`) instead of the
+  full canonical `ScanResult`. Root cause of the change: the MCP layer
+  serialized the entire `ScanResult`, and on real repositories the
+  `dependencies` (~41%), `modules` (~27%), `stats` (~12%), and `files` (~11%)
+  sections — which scale linearly with repo size — pushed responses past the
+  MCP tool-result size cap (a large repo produced ~300k chars / ~75k tokens).
+  The engine was never the problem; only the presentation layer. The projection
+  is a deliberate, pure reduction of the `ScanResult` (the single source of
+  truth remains unchanged): it keeps counts, language breakdown, dependency
+  totals, unresolved refs, cycles, hotspots, compact findings, the highest-risk
+  files (complexity / churn / fan-in / fan-out, top 10 each), and a bounded Git
+  summary, while dropping every dependency edge, exported symbol, per-file
+  metadata record, finding description, and the full churn/history. Cycles and
+  unresolved-ref paths are projected to repo-relative POSIX via
+  `toPosixRelativePath`. No AI; fully deterministic. Measured on this repo:
+  120,853 → 13,232 chars (89.1% / 9.1× smaller); the reduction grows on larger
+  repos because the omitted sections are the ones that scale. CLI, scanner,
+  engine, and domain model are untouched.
 
 ## 11. Problems Encountered and Solutions
 
@@ -497,7 +515,7 @@ future work.
 
 ## 12. Testing and Verification
 
-- **181 tests** across 16 files:
+- **185 tests** across 16 files:
   - `test/unit/types.test.ts` (3) — LANGUAGES immutability, ScanResult schema
   - `test/unit/cli.test.ts` (2) — command registration, version
   - `test/scanner/paths.test.ts` (11) — path normalization, test/config detection
@@ -538,10 +556,13 @@ future work.
     determinism, non-Git → `stats:null`; `--json` valid-JSON parse,
     determinism, no stdout contamination (stderr clean), JSON error object,
     command regression (scan/git/findings)
-  - `test/mcp/server.test.ts` (6) — MCP round-trip via `InMemoryTransport`:
-    valid ScanResult, nonexistent path error, file-not-directory error,
-    engine integration consistency, field shape validation, engine-failure
-    never throws from `callTool`
+  - `test/mcp/server.test.ts` (10) — MCP round-trip via `InMemoryTransport`:
+    compact `ScanSummary` returned for a valid root, nonexistent path error,
+    file-not-directory error, counts consistent with `scanRepository()`
+    directly, compact field shapes, engine-failure never throws from
+    `callTool`, materially-smaller response than the full `ScanResult`
+    (<10%), preserved architectural signals, bounded Git summary, and
+    projection determinism
 - **Fixture repos** built at runtime in a temp dir via
   `test/helpers/fs.ts` + `test/fixtures/kitchen-sink.ts`; cleaned up
   automatically. Analyzer tests analyze content in memory (no fixtures);
@@ -591,9 +612,11 @@ TypeScript Compiler API (see §10).
 - **Exported kind for some forms is conservative.** `export default <local-identifier>`
   reports `constant` (the kind of the underlying symbol is not knowable from
   that statement alone); anonymous defaults use an `(anonymous)` placeholder.
-- **`ScanResult` vs `DiscoveryResult`/`DependencyGraph`.** The full `ScanResult`
-  type is forward-declared but not yet produced; `get_architecture`-style
-  aggregation is future work.
+- **`ScanResult` is produced; finer-grained/sliced views are not.** The full
+  `ScanResult` is produced by the engine (`scanRepository`). The MCP
+  `scan_repository` tool returns a compact `ScanSummary` projection; a
+  `get_architecture` / `get_file_details`-style tool that returns a bounded
+  slice of `ScanResult` on demand is future work (see §15).
 - **Coverage unverified.** 80% thresholds configured but not validated
   (`@vitest/coverage-v8` not installed).
 - **Git analysis is commit-count/churn/contributors/recent-focused, not a
@@ -626,9 +649,13 @@ TypeScript Compiler API (see §10).
 
 - Phases 1A, 1B, 1C, 1D, 1E, Findings / Hotspots, CLI polish, and MCP Server
   (foundation + `scan_repository`) are **complete and verified**.
-- 181 tests pass (175 previous + 6 new MCP server tests);
-  build/typecheck/lint/format/CLI smoke/MCP stdio smoke all pass.
+- The MCP `scan_repository` tool now returns a compact, agent-oriented
+  `ScanSummary` instead of the full `ScanResult` (MCP refactor; see §10). The
+  full `ScanResult` remains the canonical source of truth and is unchanged.
+- 185 tests pass (181 previous + 4 new MCP projection tests);
+  build/typecheck/lint/format/CLI smoke/MCP stdio round-trip all pass.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
-- **Next task:** Expand MCP tool set (not started).
+- **Next task:** Expand MCP tool set (add finer-grained tools over the
+  `ScanResult`, or a `get_file_details`/pageable slice tool). Not started.
 - **Blockers:** none.
