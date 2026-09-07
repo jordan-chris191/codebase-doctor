@@ -1,19 +1,37 @@
 /**
- * A hotspot is a file that combines high change frequency (churn) with
- * high complexity — the files where changes are most likely to introduce
- * bugs.
+ * Signals that contribute to a hotspot, with the raw measured values. No
+ * opaque normalized scores are used — each signal is the actual value from
+ * the upstream analysis, so a reader can see exactly why the file is flagged.
+ */
+export interface HotspotSignals {
+  /** Cyclomatic complexity of the file (Phase 1C). */
+  readonly complexity: number;
+  /** Total churn (additions+deletions) for the file (Phase 1E). */
+  readonly churn: number;
+  /** Number of distinct internal modules this file depends on (Phase 1D). */
+  readonly fanOut: number;
+  /** Number of distinct internal modules that depend on this file (Phase 1D). */
+  readonly fanIn: number;
+  /** True when the file participates in a dependency cycle (Phase 1D). */
+  readonly inCycle: boolean;
+}
+
+/**
+ * A hotspot is a file that combines multiple objective risk signals. It is
+ * NOT an opaque composite score: `signals` exposes the raw measured values,
+ * `findings` lists the contributing rule IDs, and `ranking` is simply the
+ * count of distinct contributing signals — so the reader can understand
+ * exactly why the file is highlighted.
  */
 export interface Hotspot {
-  /** Path relative to the repository root. */
+  /** Repository-relative POSIX path. */
   readonly filePath: string;
-  /** How often the file changes, normalized. */
-  readonly churnScore: number;
-  /** Cyclomatic complexity, normalized. */
-  readonly complexityScore: number;
-  /** Combined risk metric. Higher is riskier. */
-  readonly combinedRisk: number;
-  /** Number of commits touching this file. */
-  readonly changeCount: number;
+  /** Raw measured signals that feed this hotspot. */
+  readonly signals: HotspotSignals;
+  /** Rule IDs of the findings that contributed. */
+  readonly findings: readonly string[];
+  /** Number of distinct contributing signals (deterministic rank). */
+  readonly ranking: number;
 }
 
 /** A repository contributor as recorded by Git. */

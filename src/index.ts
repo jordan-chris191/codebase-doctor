@@ -29,6 +29,7 @@ export type {
 } from "./types/finding.js";
 export type {
   Hotspot,
+  HotspotSignals,
   RepoStats,
   GitContributor,
   GitFileChurn,
@@ -64,3 +65,14 @@ export {
   GitOutputError,
   type GitAnalysisOptions,
 } from "./git/index.js";
+export {
+  runFindings,
+  buildHotspots,
+  COMPLEXITY_THRESHOLD,
+  CHURN_THRESHOLD,
+  FAN_OUT_THRESHOLD,
+  FAN_IN_THRESHOLD,
+  LARGE_FILE_LINES,
+  type FindingsContext,
+  type FindingsResult,
+} from "./findings/index.js";

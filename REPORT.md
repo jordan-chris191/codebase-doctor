@@ -231,6 +231,24 @@ test/
   `recentActivity`; new `GitContributor`/`GitFileChurn`/`GitRecentCommit` types.
 - **13 Git tests** (`test/git/`); 142 tests total.
 
+**Findings / Hotspots (Phase 1F, complete):**
+
+- **Deterministic rule engine** (`src/findings/`): `rules.ts`, `engine.ts`,
+  `hotspots.ts`, `types.ts`, `index.ts`. Consumes Phase 1A–1E outputs only —
+  never re-parses, re-scans, or re-resolves.
+- **Rules** (explicit thresholds; each finding carries `measured` + `threshold`):
+  `high-complexity` (≥15, high), `high-churn` (≥200, medium), `high-fan-out`
+  (≥20, medium), `high-fan-in` (≥10, low), `dependency-cycle` (high),
+  `large-complex-file` (lines ≥800 AND complexity ≥15, high).
+- **Finding model** extended: `ruleId`, `measured`, `threshold`, `evidence`;
+  added `churn`/`fan-in`/`fan-out` categories.
+- **Hotspot** replaced opaque normalized scores with explicit `signals`
+  (complexity, churn, fanIn, fanOut, inCycle), contributing `findings`, and a
+  deterministic `ranking` (count of ≥2 priority signals). No opaque composite.
+- **CLI** — `codebase-doctor findings [--recent N]`.
+- Deterministic ordering (severity/ruleId/path/measured; hotspots ranking/path).
+- **25 findings tests**; 167 tests total.
+
 ## 7. Development Phases
 
 1. **Phase 1A — Foundation** — COMPLETE
@@ -238,8 +256,8 @@ test/
 3. **Phase 1C — TypeScript/JavaScript Analysis** — COMPLETE
 4. **Phase 1D — Dependency Graph** — COMPLETE
 5. **Phase 1E — Git Analysis** — COMPLETE
-6. **Findings / Hotspots** — NEXT, NOT STARTED
-7. **CLI polish** — PLANNED
+6. **Findings / Hotspots** — COMPLETE
+7. **CLI polish** — NEXT, NOT STARTED
 8. **MCP Server** — PLANNED (first-class interface)
 9. **Claude Code Integration** — PLANNED
 10. **AI Reasoning Layer** — PLANNED (optional, after deterministic core)
@@ -248,8 +266,8 @@ test/
 
 ## 8. Current Phase
 
-**Phase 1E (Git Analysis)** is COMPLETE and verified. The next phase,
-**Findings / Hotspots**, has not started.
+**Findings / Hotspots** is COMPLETE and verified. The next phase,
+**CLI polish**, has not started.
 
 ## 9. Domain Model
 
@@ -274,13 +292,17 @@ Defined in `src/types`. All are pure, readonly, dictionary-shaped types.
   external / unresolved. Unresolved references are retained in a list, never
   discarded.
 - **`Finding`, `FindingCategory`, `FindingLocation`** (`finding.ts`) —
-  issue/observation model for the later findings phase. Types exist; no
-  finding rules are implemented yet.
-- **`Hotspot`, `RepoStats`, `GitContributor`, `GitFileChurn`, `GitRecentCommit`**
-  (`stats.ts`) — risk and git aggregate types. `RepoStats` is produced by the
-  Phase 1E Git analyzer (`contributors`, `fileChurn`, `recentActivity`,
-  `filesByChurn`, dates, totals). `Hotspot` remains forward-declared (produced
-  in the Findings/Hotspots phase).
+  issue/observation model. Produced by the Phase 1F rules engine. Each finding
+  carries `ruleId`, `measured`, `threshold`, and `evidence` so MCP consumers
+  can explain it without re-parsing. Categories cover complexity, churn,
+  fan-in/out, circular-dependency, large-file (and reserved missing-tests /
+  unused-dependency / dead-code).
+- **`Hotspot`, `HotspotSignals`, `RepoStats`, `GitContributor`,
+  `GitFileChurn`, `GitRecentCommit`** (`stats.ts`) — risk and git aggregate
+  types. `RepoStats` is produced by Phase 1E. `Hotspot` is produced by Phase 1F
+  and exposes explicit `signals` (complexity, churn, fanIn, fanOut, inCycle),
+  contributing `findings` (ruleIds), and a deterministic `ranking` — no opaque
+  composite score.
 - **`ScanResult`** (`scan.ts`) — the intended top-level scan artifact.
   `schemaVersion: 1`. Partially realized: `DiscoveryResult` is the current
   concrete scan output.
@@ -354,6 +376,15 @@ future work.
   `totalCommits` but not file churn/contributors (`--no-merges` for those);
   renames are attributed to the post-rename path; binary changes count as a
   churn event with zero numeric add/del. All deterministic and documented.
+- **Explicit thresholds + signal-exposing hotspots (Phase 1F).** Every rule
+  is a pure function over ONE upstream metric with a documented threshold and
+  a fixed severity; every finding carries `measured` + `threshold`. Hotspots
+  are not an opaque composite — they expose raw `signals`, contributing
+  `findings`, and a count-based `ranking`. No AI, no opacity, fully
+  reproducible.
+- **No second parse (Phase 1F).** The findings engine is a pure consumer of
+  `DiscoveryResult` + `FileAnalysis` + `DependencyGraph` + `RepoStats`; it
+  never touches the filesystem, AST, resolver, or Git again.
 
 ## 11. Problems Encountered and Solutions
 
@@ -403,7 +434,7 @@ future work.
 
 ## 12. Testing and Verification
 
-- **142 tests** across 13 files:
+- **167 tests** across 14 files:
   - `test/unit/types.test.ts` (3) — LANGUAGES immutability, ScanResult schema
   - `test/unit/cli.test.ts` (2) — command registration, version
   - `test/scanner/paths.test.ts` (11) — path normalization, test/config detection
@@ -435,6 +466,11 @@ future work.
     repo, non-Git dir, multiple contributors, add/modify/delete, multi-file
     commit, rename policy, recent limit/order, determinism, POSIX path
     normalization, binary churn, merge policy
+  - `test/findings/rules.test.ts` (25) — complexity/churn/fan-in/fan-out
+    below/boundary/above, cycles (none/self/multi/multiple), large+complex,
+    hotspots (no/one/multiple signals, deterministic aggregation), determinism
+    (repeated analysis identical), empty repo (no fabricated findings),
+    malformed upstream (missing analysis → no misleading findings)
 - **Fixture repos** built at runtime in a temp dir via
   `test/helpers/fs.ts` + `test/fixtures/kitchen-sink.ts`; cleaned up
   automatically. Analyzer tests analyze content in memory (no fixtures);
@@ -444,9 +480,8 @@ future work.
 - **Coverage** thresholds configured at 80% but not yet run/verified
   (`@vitest/coverage-v8` not installed).
 - **Verification pipeline** (all PASS as of 2026-09-07):
-  build, typecheck, test (142), lint, format:check, and CLI smoke tests
-  (`scan`: `70 files, 18 dirs`; `git`: 4 commits, 1 contributor, populated
-  churn/dates/recent).
+  build, typecheck, test (167), lint, format:check, and CLI smoke tests
+  (`findings` deterministic across two runs; `scan`/`git` regression PASS).
 
 ## 13. Dependencies
 
@@ -491,6 +526,11 @@ TypeScript Compiler API (see §10).
 - **Rename tracking is path-level.** Churn is attributed to the post-rename
   path; git's `-M` similarity scoring is not used, so a heavily-edited rename
   may appear as delete+add rather than a single rename.
+- **Findings rules are threshold-based and fixed.** Thresholds are documented
+  constants; they are not configurable per-project (a later phase could add
+  config without changing the deterministic core).
+- **Missing-tests / unused-dependency / dead-code categories are reserved**
+  but not yet produced — no rule currently emits them.
 - **JS/TS only.** Python/other language analyzers are explicitly out of the
   near-term MVP.
 - **Config detection heuristic.** `isConfigFile` matches a curated basename
@@ -498,9 +538,8 @@ TypeScript Compiler API (see §10).
 
 ## 15. Future Development
 
-- **Findings / Hotspots:** deterministic rules over the computed model
-  (structure + complexity + Git churn) to surface risk and debt.
-- **CLI polish:** richer scan/report output.
+- **CLI polish:** richer scan/report output (e.g. `--json`, persistent
+  `ScanResult`).
 - **MCP Server:** first-class interface exposing scan/architecture/dependency/
   git/finding tools.
 - **AI Reasoning Layer** (optional): explanation and prioritization on top
@@ -509,10 +548,10 @@ TypeScript Compiler API (see §10).
 
 ## 16. Current Status Summary
 
-- Phases 1A, 1B, 1C, 1D and 1E are **complete and verified**.
-- 142 tests pass (129 previous + 13 new Git tests);
+- Phases 1A, 1B, 1C, 1D, 1E and Findings / Hotspots are **complete and verified**.
+- 167 tests pass (142 previous + 25 new findings tests);
   build/typecheck/lint/format/CLI smoke all pass.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
-- **Next task:** Findings / Hotspots (not started).
+- **Next task:** CLI polish (not started).
 - **Blockers:** none.

@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { createScanner } from "./scanner/scanner.js";
 import { ScanError } from "./scanner/errors.js";
+import { createTypeScriptAnalyzer, type FileAnalysis } from "./analyzers/index.js";
+import { buildDependencyGraph } from "./dependencies/graph.js";
 import { analyzeGitRepository } from "./git/analysis.js";
 import { GitAnalysisError } from "./git/errors.js";
+import { runFindings } from "./findings/engine.js";
 import type { DiscoveryResult } from "./scanner/results.js";
 
 /**
@@ -53,6 +57,71 @@ function printScanSummary(result: DiscoveryResult): void {
   }
 }
 
+/**
+ * Run the full deterministic pipeline for a repository and emit findings +
+ * hotspots. Reuses the scanner/analyzer/graph/git layers; no re-scanning.
+ */
+async function findingsCommand(
+  pathValue: string | undefined,
+  opts: { recent: string },
+): Promise<void> {
+  const targetPath = pathValue ?? process.cwd();
+  const recentLimit = Number.parseInt(opts.recent, 10) || 10;
+  const scanner = createScanner();
+  const analyzer = createTypeScriptAnalyzer();
+  try {
+    const discovery = await scanner.scan(targetPath);
+
+    // Analyze every source file.
+    const analyses = new Map<string, FileAnalysis>();
+    for (const file of discovery.files) {
+      if (!file.isSource) continue;
+      try {
+        analyses.set(
+          file.absolutePath,
+          analyzer.analyzeFile(file.absolutePath, readFileSync(file.absolutePath, "utf8")),
+        );
+      } catch (err) {
+        // A single unparseable file must not abort findings.
+        if (err instanceof Error) {
+          // eslint-disable-next-line no-console
+          console.error(`Warning: skipping ${file.path}: ${err.message}`);
+        }
+      }
+    }
+
+    const graph = buildDependencyGraph(discovery, analyses);
+    const stats = await analyzeGitRepository(targetPath, { recentLimit });
+    const result = runFindings({ discovery, analyses, graph, stats });
+    printFindings(result);
+  } catch (err) {
+    if (err instanceof ScanError || err instanceof GitAnalysisError) {
+      // eslint-disable-next-line no-console
+      console.error(`Error: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
+}
+
+function printFindings(result: Awaited<ReturnType<typeof runFindings>>): void {
+  // eslint-disable-next-line no-console
+  console.log(`Findings for ${result.rootPath}`);
+  // eslint-disable-next-line no-console
+  console.log(`  findings: ${result.findings.length}`);
+  for (const f of result.findings.slice(0, 20)) {
+    // eslint-disable-next-line no-console
+    console.log(`    [${f.severity}] ${f.ruleId} ${f.location.path} (${f.description})`);
+  }
+  // eslint-disable-next-line no-console
+  console.log(`  hotspots: ${result.hotspots.length}`);
+  for (const h of result.hotspots.slice(0, 10)) {
+    // eslint-disable-next-line no-console
+    console.log(`    ${h.filePath} ranking=${h.ranking} signals=${JSON.stringify(h.signals)}`);
+  }
+}
+
 export function buildProgram(): Command {
   const program = new Command();
 
@@ -88,6 +157,13 @@ export function buildProgram(): Command {
         throw err;
       }
     });
+
+  program
+    .command("findings")
+    .description("Run deterministic findings and hotspot analysis on a repository")
+    .argument("[path]", "directory to analyze (defaults to current working directory)")
+    .option("--recent <n>", "number of recent commits to consider (default 10)", "10")
+    .action(findingsCommand);
 
   return program;
 }

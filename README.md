@@ -10,11 +10,11 @@ When an AI agent works in an unfamiliar repository, it typically has to rediscov
 
 The project follows a **deterministic-first** philosophy: repository facts (structure, dependencies, cycles, complexity, churn) are computed by reproducible, testable code — never by an LLM. AI reasoning is a potential future layer that can explain or prioritize the deterministic output, but it is never the source of truth. This is not a generic file-search tool, not a RAG wrapper, and not an AI code generator.
 
-> **Status: early development.** Codebase Doctor is under active construction. The current implementation covers repository discovery, per-file TypeScript/JavaScript analysis, a repository-level dependency graph, and Git history analysis; findings, hotspots, and MCP are planned but not yet built.
+> **Status: early development.** Codebase Doctor is under active construction. The current implementation covers repository discovery, per-file TypeScript/JavaScript analysis, a repository-level dependency graph, Git history analysis, and deterministic findings/hotspots; MCP and AI are planned but not yet built.
 
 ## Current Status
 
-The project is developed in phases. The current implementation provides **repository discovery** (Phase 1B), **TypeScript/JavaScript analysis** (Phase 1C), a **dependency graph** (Phase 1D), and **Git analysis** (Phase 1E) on a strict TypeScript foundation (Phase 1A).
+The project is developed in phases. The current implementation provides **repository discovery** (Phase 1B), **TypeScript/JavaScript analysis** (Phase 1C), a **dependency graph** (Phase 1D), **Git analysis** (Phase 1E), and **findings/hotspots** on a strict TypeScript foundation (Phase 1A).
 
 | Phase | Status |
 |---|---|
@@ -23,12 +23,13 @@ The project is developed in phases. The current implementation provides **reposi
 | Phase 1C — TypeScript/JavaScript Analysis | ✅ Complete |
 | Phase 1D — Dependency Graph | ✅ Complete |
 | Phase 1E — Git Analysis | ✅ Complete |
+| Findings / Hotspots | ✅ Complete |
 
-Later phases (Findings/Hotspots, MCP Server, AI Reasoning Layer, Change Validation) are planned but not yet started. See [Development Roadmap](#development-roadmap) below.
+Later phases (MCP Server, AI Reasoning Layer, Change Validation) are planned but not yet started. See [Development Roadmap](#development-roadmap) below.
 
 ## Architecture
 
-The current pipeline computes repository structure in discrete layers. The scanner, the TypeScript/JavaScript analyzer, the dependency graph, and Git analysis are implemented today; findings/hotspots and everything downstream is planned.
+The current pipeline computes repository structure in discrete layers. The scanner, the TypeScript/JavaScript analyzer, the dependency graph, Git analysis, and findings/hotspots are implemented today; MCP and everything downstream is planned.
 
 ```
 Repository
@@ -41,6 +42,8 @@ Dependency Graph (IMPLEMENTED — resolution, edges, cycles)
     ↓
 Git Analysis (IMPLEMENTED — commits, churn, contributors, recent)
     ↓
+Findings / Hotspots (IMPLEMENTED — deterministic rules)
+    ↓
 MCP Server (PLANNED — not yet built)
     ↓
 AI Coding Agents
@@ -52,10 +55,11 @@ AI Coding Agents
 - **TypeScript/JavaScript analyzer** (`src/analyzers`) — parses TS/TSX/JS/JSX with the TypeScript Compiler API and produces a deterministic `FileAnalysis` per file: module references (imports — static, type-only, side-effect, dynamic, CommonJS `require()`), exports (functions, classes, constants, types, interfaces, enums, namespaces; named/aliased/type re-exports; default exports), function and class names, and cyclomatic complexity. Syntax errors surface as structured `FileParseError` rather than crashing a scan.
 - **Dependency graph** (`src/dependencies`) — repository-aware module resolution via the TypeScript Compiler API (honoring `tsconfig.json` `baseUrl`/`paths`), classification into internal/external/unresolved, a deterministic `DependencyGraph` of weighted edges, and cycle detection (Tarjan SCC). Re-exports and CommonJS/dynamic/type-only imports participate.
 - **Git analysis** (`src/git`) — deterministic repository-level Git facts via the Git CLI: commit count, first/last commit dates, contributors, per-file churn, and bounded recent activity. Batch commands (`--format`, `--numstat`), no per-file `git` processes, POSIX-normalized paths. Documented policies for merges, renames, and binary files.
+- **Findings / Hotspots** (`src/findings`) — a deterministic rules engine over the Phase 1A–1E outputs: explicit thresholds for high complexity, high churn, high fan-in/out, dependency cycles, and large+complex files. Each finding carries the rule ID, severity, measured value, threshold, and evidence; hotspots expose raw signals (complexity, churn, fan-in/out, cycle) plus contributing findings, with no opaque composite score. Never AI.
 
 **Foundation present (types only):**
 
-- **Domain model** (`src/types`) — the shared vocabulary for the intended architecture (modules, dependencies, scan results). These types are defined and consumed by the scanner, analyzer, dependency-graph, and Git layers; the layers that fully populate them are planned (findings, hotspots).
+- **Domain model** (`src/types`) — the shared vocabulary for the intended architecture (modules, dependencies, scan results, findings, hotspots). These types are defined and consumed by every layer.
 
 **Planned (not yet built):**
 
@@ -90,7 +94,9 @@ Currently implemented:
 - **Cycle detection** — deterministic (Tarjan SCC) detection of simple, longer, multiple, and self-cycles, each reported once.
 - **Git analysis** — deterministic, batch Git facts: commit count, first/last commit dates (ISO-8601), contributors by identity, per-file churn (commitCount/additions/deletions/churn), and bounded recent activity.
 - **Git policies** — merges count in totals but not churn/contributors; renames attributed to the post-rename path; binary changes counted as churn with zero numeric add/del; empty Git repos return an all-null shape (not an error).
-- **CLI integration** — `codebase-doctor scan [path]` runs discovery and prints a summary; `codebase-doctor git [path] [--recent N]` runs Git analysis and prints statistics.
+- **Deterministic findings** — explicit rules with documented thresholds (`high-complexity` ≥15, `high-churn` ≥200, `high-fan-out` ≥20, `high-fan-in` ≥10, `dependency-cycle`, `large-complex-file`). Each finding exposes rule ID, severity, measured value, threshold, and evidence.
+- **Expliable hotspots** — a file flagged by ≥2 priority rules is a hotspot that exposes raw `signals` (complexity, churn, fan-in/out, cycle) and contributing findings; no opaque composite score, no AI.
+- **CLI integration** — `codebase-doctor scan [path]` runs discovery; `codebase-doctor git [path] [--recent N]` runs Git analysis; `codebase-doctor findings [path] [--recent N]` runs deterministic findings + hotspots.
 
 ## Technology Stack
 
@@ -130,6 +136,12 @@ node dist/cli.js git
 
 # Run Git analysis with a custom recent-commit bound
 node dist/cli.js git /path/to/repository --recent 20
+
+# Run deterministic findings and hotspot analysis
+node dist/cli.js findings
+
+# Findings with a custom recent-commit bound
+node dist/cli.js findings /path/to/repository --recent 20
 
 # Help and version
 node dist/cli.js --help
@@ -197,11 +209,12 @@ Currently tested:
 - **Dependency graph** (`test/dependencies/graph.test.ts`) — relative/parent/extensionless resolution, TSX/JS/JSX, index/dir, external + scoped packages, `require()`, dynamic + type-only imports, re-exports, export-star, path aliases, unresolved (relative + package), boundary safety, duplicate collapse, deterministic ordering, mixed internal/external, nested structure.
 - **Cycle detection** (`test/dependencies/cycles.test.ts`) — simple, longer, multiple, and self-cycles; deterministic order; stable equivalent input; diamond graphs produce no false cycles.
 - **Git analysis** (`test/git/analysis.test.ts`) — multi-commit, single-commit, empty repo, non-Git dir, multiple contributors, add/modify/delete, multi-file commit, rename policy, recent-activity limit/order, determinism, POSIX path normalization, binary churn, merge policy. Fixtures use real temp Git repositories with local identity and fixed commit dates (never the user's global Git config or wall-clock).
+- **Findings** (`test/findings/rules.test.ts`) — complexity/churn/fan-in/fan-out below/boundary/above thresholds, cycles (none/self/multi/multiple), large+complex files, hotspots (no/one/multiple signals, deterministic aggregation), determinism (repeated analysis identical), empty repos (no fabricated findings), and malformed upstream (missing analysis → no misleading findings).
 - **Paths & detection** (`test/scanner/paths.test.ts`) — POSIX path normalization, relative-path computation, test/config file detection.
 - **Error handling** (`test/scanner/errors.test.ts`) — structured errors for missing/file paths.
 - **Types & CLI** (`test/unit/`) — domain-model shape and CLI command registration.
 
-**Latest verified result:** 142 tests passing across 13 files (`npm run test`).
+**Latest verified result:** 167 tests passing across 14 files (`npm run test`).
 
 > Coverage thresholds are configured in `vitest.config.ts`, but coverage has not yet been run (the coverage provider is not installed) and no coverage percentage is claimed.
 
@@ -212,7 +225,8 @@ Planned phases:
 - **Phase 1C — TypeScript/JavaScript Analysis** — ✅ Complete. Parses TS/TSX/JS/JSX via the TypeScript Compiler API to extract imports, exports, functions, classes, and cyclomatic complexity.
 - **Phase 1D — Dependency Graph** — ✅ Complete. Repository-aware module resolution, internal/external/unresolved classification, a deterministic `DependencyGraph` of weighted edges, and cycle detection, all on the same TypeScript compiler AST used in Phase 1C.
 - **Phase 1E — Git Analysis** — ✅ Complete. Deterministic Git history facts (commit count, first/last dates, contributors, per-file churn, recent activity) via batch Git CLI commands, with documented merge/rename/binary policies.
-- **Findings / Hotspots** — deterministic rules over the computed model (structure + complexity + Git churn) to surface risk and debt.
+- **Findings / Hotspots** — ✅ Complete. A deterministic rules engine over structure + complexity + Git churn, with explicit thresholds and explainable, signal-exposing hotspots.
+- **CLI polish** — next planned phase: richer reporting (e.g. `--json`, persistent `ScanResult`).
 - **MCP Server** — the first-class interface through which AI coding agents query the intelligence.
 
 Further planned work: an AI reasoning layer (optional explanations on top of the deterministic core), change validation (impact assessment for proposed edits), and an optional dashboard — all explicitly out of the near-term scope.

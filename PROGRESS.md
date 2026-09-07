@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 1E — Git Analysis**
+**Findings / Hotspots**
 
 Status: **COMPLETE** (verified)
 
@@ -11,12 +11,12 @@ Status: **COMPLETE** (verified)
 ## Current Status
 
 - Phases 1A (Foundation), 1B (Repository Discovery), 1C (TypeScript/JavaScript
-  Analysis), 1D (Dependency Graph) and 1E (Git Analysis) are **COMPLETE** and
-  verified.
+  Analysis), 1D (Dependency Graph), 1E (Git Analysis) and the Findings /
+  Hotspots phase are **COMPLETE** and verified.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
-- The next phase (Future — Findings / Hotspots) has **not** started.
+- The next phase (CLI polish) has **not** started.
 
 ---
 
@@ -227,6 +227,46 @@ Implemented:
 **Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
 no coverage percentage claimed.
 
+### Findings / Hotspots
+
+**Status: COMPLETE**
+
+Implemented:
+
+- **Deterministic rule engine** (`src/findings/`): `rules.ts`, `engine.ts`,
+  `hotspots.ts`, `types.ts`, `index.ts`. Consumes Phase 1A–1E outputs only
+  (never re-parses, re-scans, or re-resolves).
+- **Rules** (explicit thresholds, each finding carries measured/threshold):
+  - `high-complexity` — complexity ≥ 15 (severity high)
+  - `high-churn` — churn (add+del) ≥ 200 (medium)
+  - `high-fan-out` — distinct internal deps ≥ 20 (medium)
+  - `high-fan-in` — distinct internal dependents ≥ 10 (low)
+  - `dependency-cycle` — member of a cycle (high)
+  - `large-complex-file` — lines ≥ 800 AND complexity ≥ 15 (high)
+- **Finding model** extended (`src/types/finding.ts`): `ruleId`, `measured`,
+  `threshold`, `evidence` added; categories added (`churn`, `fan-in`,
+  `fan-out`).
+- **Hotspot** (`src/types/stats.ts`): replaced opaque normalized scores with
+  explicit `signals` (complexity, churn, fanIn, fanOut, inCycle), `findings`
+  (contributing ruleIds), `ranking` (count of ≥2 priority signals). No opaque
+  composite score.
+- **CLI** — new `codebase-doctor findings [path] [--recent N]` command.
+- Deterministic ordering (severity/ruleId/path/measured; hotspots ranking/path).
+- 25 findings tests (`test/findings/`); 167 tests total.
+
+**Verification:**
+
+- `npm run build` — PASS
+- `npm run typecheck` — PASS
+- `npm run test` — PASS (167 tests: 142 existing + 25 new)
+- `npm run lint` — PASS
+- `npm run format:check` — PASS
+- CLI smoke (`findings`, `scan`, `git`) — PASS
+- Determinism: `findings` output identical across two runs — PASS
+
+**Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
+no coverage percentage claimed.
+
 ---
 
 Phase 1C acceptance criteria (all met):
@@ -315,19 +355,18 @@ None.
 
 ## Next Task
 
-### Findings / Hotspots (NOT STARTED)
+### CLI polish (NOT STARTED)
 
-Deterministic rules over the computed model (structure, complexity, Git churn)
-to surface risk and debt: large files, high-complexity hotspots, high-churn
-files, missing tests, unused dependencies, and other findings.
+Richer CLI reporting for the existing `scan`/`git`/`findings` commands
+(e.g. machine-readable JSON output, `--json` flag, richer summaries).
 
 Planned objectives:
 
-- Combine Phase 1C complexity + Phase 1E churn into `Hotspot` scores
-- Deterministic `Finding` rules (`FindingCategory`)
-- No AI; rules are reproducible and testable
+- Structured (JSON) output mode for `scan` / `git` / `findings`
+- Persistent `ScanResult` artifact (full aggregation of all phases)
+- No dashboard/UI; keep the CLI a thin reporting surface
 
-Do NOT start the Findings/Hotspots phase until explicitly instructed.
+Do NOT start CLI polish until explicitly instructed.
 
 ---
 
@@ -338,8 +377,8 @@ Do NOT start the Findings/Hotspots phase until explicitly instructed.
 3. Phase 1C — TypeScript/JavaScript Analysis — **COMPLETE**
 4. Phase 1D — Dependency Graph — **COMPLETE**
 5. Phase 1E — Git Analysis — **COMPLETE**
-6. Findings / Hotspots — **NEXT, not started**
-7. CLI polish
+6. Findings / Hotspots — **COMPLETE**
+7. CLI polish — **NEXT, not started**
 8. MCP Server (first-class interface)
 9. Claude Code Integration
 10. AI Reasoning Layer (optional, after deterministic core)
@@ -351,6 +390,23 @@ Do NOT start the Findings/Hotspots phase until explicitly instructed.
 ## Session Log
 
 ## 2026-09-07
+
+- Completed the Findings / Hotspots phase.
+- Deterministic rule engine (`src/findings/`): `high-complexity` (≥15),
+  `high-churn` (≥200), `high-fan-out` (≥20), `high-fan-in` (≥10),
+  `dependency-cycle`, `large-complex-file` (≥800 lines AND complexity ≥15).
+- Finding model extended (`ruleId`, `measured`, `threshold`, `evidence` /
+  `churn`/`fan-in`/`fan-out` categories); `Hotspot` now exposes explicit
+  `signals` + `findings` + `ranking` (no opaque score).
+- CLI added `codebase-doctor findings [--recent N]`; output verified
+  deterministic (two runs identical).
+- Added 25 findings tests (167 total passing); build/typecheck/lint/format PASS.
+- Coverage still unverified (`@vitest/coverage-v8` not installed — pre-existing).
+
+Next action:
+Begin CLI polish when instructed. Read this file and REPORT.md first.
+
+## 2026-09-07 (earlier)
 
 - Completed Phase 1E (Git Analysis).
 - Batch Git analysis (`src/git/`): `analyzeGitRepository` → `RepoStats`;
