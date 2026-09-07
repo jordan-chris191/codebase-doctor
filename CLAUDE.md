@@ -90,19 +90,22 @@ Stable project facts useful to future Claude sessions:
 - **Runtime:** TypeScript (strict), ESM, Node.js >= 20, `module: NodeNext`.
 - **Compiler:** strict TS with `isolatedDeclarations`, `exactOptionalPropertyTypes`,
   `noUncheckedIndexedAccess`.
-- **Testing:** Vitest (129 tests passing). Coverage thresholds configured at
+- **Testing:** Vitest (142 tests passing). Coverage thresholds configured at
   80% but not yet verified (coverage provider not installed).
 - **Lint/format:** ESLint 9 (flat config) + Prettier.
 - **Runtime deps:** `commander` (CLI), `ignore` (gitignore semantics),
-  `typescript` (canonical analysis engine — Phase 1C/1D).
+  `typescript` (canonical analysis engine — Phase 1C/1D), `git` CLI
+  (Phase 1E, invoked via `child_process.execFile`, no library).
 - **Source layout:** `src/types` (domain model), `src/scanner` (discovery),
   `src/analyzers` (TypeScript/JavaScript analyzer), `src/dependencies`
-  (dependency graph + cycle detection), `src/utils`, `src/cli.ts`.
+  (dependency graph + cycle detection), `src/git` (Git analysis),
+  `src/utils`, `src/cli.ts`.
 - **The repository is a Git repository**, on branch `master`, with
   `origin` at `https://github.com/jordan-chris191/codebase-doctor.git`.
 - Phases 1A (Foundation), 1B (Repository Discovery), 1C
-  (TypeScript/JavaScript Analysis), and 1D (Dependency Graph) are COMPLETE.
-  The next phase is 1E (Git Analysis) — not yet started.
+  (TypeScript/JavaScript Analysis), 1D (Dependency Graph), and 1E (Git
+  Analysis) are COMPLETE. The next phase is Findings / Hotspots — not yet
+  started.
 
 For a detailed technical record of what has been built, decided, and
 verified, see REPORT.md.

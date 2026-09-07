@@ -207,14 +207,38 @@ test/
   `DependencyEdge` gained `kind` and `specifier`; `DependencyType = ImportType`.
 - **32 dependency tests** (`test/dependencies/`); 129 tests total.
 
+**Phase 1E — Git Analysis (complete):**
+
+- **Batch Git analysis** (`src/git/`): `analyzeGitRepository(rootPath, { recentLimit? })`
+  → `RepoStats`, using the Git CLI via `child_process.execFile` (no shell,
+  Windows-safe; no new dependencies).
+- **Commit statistics** — `totalCommits` (all incl. merges), `firstCommitDate` /
+  `lastCommitDate` (ISO-8601 `%aI`).
+- **File churn** — `fileChurn[]` (`path`, `commitCount`, `additions`, `deletions`,
+  `churn`), aggregated from one `git log --numstat` batch (no per-file `git`).
+- **Contributors** — `contributors[]` (`name`, `email`, `commitCount`), grouped by
+  identity, sorted deterministically.
+- **Recent activity** — `recentActivity[]` (`hash`, `author`, `email`, `date`,
+  `subject`), newest-first, bounded by `recentLimit` (default **10**).
+- **Policies**: merges count in `totalCommits` but not file churn/contributors;
+  renames attributed to the post-rename path; binary files counted as churn with
+  zero numeric add/del; POSIX path normalization; empty repos return an
+  all-null/empty shape (not an error); non-Git dirs throw `NotAGitRepositoryError`.
+- **Errors** — `GitAnalysisError` hierarchy: `NotAGitRepositoryError`,
+  `GitUnavailableError`, `GitCommandError`, `GitOutputError`.
+- **CLI** — new `codebase-doctor git [path] [--recent N]` command.
+- **Domain** — `RepoStats` extended (additive) with `contributors`, `fileChurn`,
+  `recentActivity`; new `GitContributor`/`GitFileChurn`/`GitRecentCommit` types.
+- **13 Git tests** (`test/git/`); 142 tests total.
+
 ## 7. Development Phases
 
 1. **Phase 1A — Foundation** — COMPLETE
 2. **Phase 1B — Repository Discovery** — COMPLETE
 3. **Phase 1C — TypeScript/JavaScript Analysis** — COMPLETE
 4. **Phase 1D — Dependency Graph** — COMPLETE
-5. **Phase 1E — Git Analysis** — NEXT, NOT STARTED
-6. **Findings / Hotspots** — PLANNED
+5. **Phase 1E — Git Analysis** — COMPLETE
+6. **Findings / Hotspots** — NEXT, NOT STARTED
 7. **CLI polish** — PLANNED
 8. **MCP Server** — PLANNED (first-class interface)
 9. **Claude Code Integration** — PLANNED
@@ -224,8 +248,8 @@ test/
 
 ## 8. Current Phase
 
-**Phase 1D (Dependency Graph)** is COMPLETE and verified. The next phase,
-**Phase 1E (Git Analysis)**, has not started.
+**Phase 1E (Git Analysis)** is COMPLETE and verified. The next phase,
+**Findings / Hotspots**, has not started.
 
 ## 9. Domain Model
 
@@ -252,8 +276,11 @@ Defined in `src/types`. All are pure, readonly, dictionary-shaped types.
 - **`Finding`, `FindingCategory`, `FindingLocation`** (`finding.ts`) —
   issue/observation model for the later findings phase. Types exist; no
   finding rules are implemented yet.
-- **`Hotspot`, `RepoStats`** (`stats.ts`) — risk and git aggregate types.
-  Not yet produced; forward-declared.
+- **`Hotspot`, `RepoStats`, `GitContributor`, `GitFileChurn`, `GitRecentCommit`**
+  (`stats.ts`) — risk and git aggregate types. `RepoStats` is produced by the
+  Phase 1E Git analyzer (`contributors`, `fileChurn`, `recentActivity`,
+  `filesByChurn`, dates, totals). `Hotspot` remains forward-declared (produced
+  in the Findings/Hotspots phase).
 - **`ScanResult`** (`scan.ts`) — the intended top-level scan artifact.
   `schemaVersion: 1`. Partially realized: `DiscoveryResult` is the current
   concrete scan output.
@@ -318,6 +345,15 @@ future work.
   decomposition finds non-trivial groups; per-SCC DFS from the canonical
   lowest node enumerates each elementary cycle exactly once. Self-loops are
   reported independently, so a self-importing module is also caught.
+- **Batch Git CLI via `child_process.execFile` (Phase 1E).** Git facts come
+  from a small number of machine-readable batch commands (`git log --format`,
+  `git log --numstat --format=`, `git rev-list --count`) — never one process
+  per file, no shell, Windows-safe, and a deterministic separator (`\x1f`, not
+  NUL) that cannot corrupt text-file detection.
+- **Merge/rename/binary policies (Phase 1E).** Merges count toward
+  `totalCommits` but not file churn/contributors (`--no-merges` for those);
+  renames are attributed to the post-rename path; binary changes count as a
+  churn event with zero numeric add/del. All deterministic and documented.
 
 ## 11. Problems Encountered and Solutions
 
@@ -367,7 +403,7 @@ future work.
 
 ## 12. Testing and Verification
 
-- **129 tests** across 12 files:
+- **142 tests** across 13 files:
   - `test/unit/types.test.ts` (3) — LANGUAGES immutability, ScanResult schema
   - `test/unit/cli.test.ts` (2) — command registration, version
   - `test/scanner/paths.test.ts` (11) — path normalization, test/config detection
@@ -395,16 +431,22 @@ future work.
   - `test/dependencies/cycles.test.ts` (7) — simple/multi/independent/self
     cycles, deterministic order, stable equivalent input, diamond (no false
     cycles)
+  - `test/git/analysis.test.ts` (13) — multi-commit, single-commit, empty
+    repo, non-Git dir, multiple contributors, add/modify/delete, multi-file
+    commit, rename policy, recent limit/order, determinism, POSIX path
+    normalization, binary churn, merge policy
 - **Fixture repos** built at runtime in a temp dir via
   `test/helpers/fs.ts` + `test/fixtures/kitchen-sink.ts`; cleaned up
   automatically. Analyzer tests analyze content in memory (no fixtures);
-  dependency tests build fixture repos and scan+analyze them.
+  dependency tests build fixture repos and scan+analyze them; Git tests build
+  real temp Git repositories with local identity and fixed commit dates
+  (never the user's global Git config or wall-clock).
 - **Coverage** thresholds configured at 80% but not yet run/verified
   (`@vitest/coverage-v8` not installed).
 - **Verification pipeline** (all PASS as of 2026-09-07):
-  build, typecheck, test (129), lint, format:check, and a CLI smoke test
-  against the project itself: `64 files, 17 dirs, (documentation: 6,
-  config: 7, unknown: 1, source: 50), took ~39ms`, `isGitRepository: true`.
+  build, typecheck, test (142), lint, format:check, and CLI smoke tests
+  (`scan`: `70 files, 18 dirs`; `git`: 4 commits, 1 contributor, populated
+  churn/dates/recent).
 
 ## 13. Dependencies
 
@@ -443,9 +485,12 @@ TypeScript Compiler API (see §10).
   aggregation is future work.
 - **Coverage unverified.** 80% thresholds configured but not validated
   (`@vitest/coverage-v8` not installed).
-- **Git history not yet analyzed.** The scanner detects whether `.git` is
-  present (`isGitRepository`) but does not analyze commit history; that is
-  Phase 1E. The project itself is a Git repository on GitHub.
+- **Git analysis is commit-count/churn/contributors/recent-focused, not a
+  forensic history engine.** It does not reconstruct branch topology, blame
+  per line, author date-vs-committer date, or submodule/ref state.
+- **Rename tracking is path-level.** Churn is attributed to the post-rename
+  path; git's `-M` similarity scoring is not used, so a heavily-edited rename
+  may appear as delete+add rather than a single rename.
 - **JS/TS only.** Python/other language analyzers are explicitly out of the
   near-term MVP.
 - **Config detection heuristic.** `isConfigFile` matches a curated basename
@@ -453,22 +498,21 @@ TypeScript Compiler API (see §10).
 
 ## 15. Future Development
 
-- **Phase 1E:** Git analysis (commit count, churn, last modification,
-  contributors, recent activity) — efficient batch `git` operations.
-- **Findings / Hotspots:** deterministic rules over the computed model.
-- **CLI polish:** richer scan reports.
-- **MCP Server:** first-class interface exposing scan/architecture/dependency
-  /hotspot/finding tools.
+- **Findings / Hotspots:** deterministic rules over the computed model
+  (structure + complexity + Git churn) to surface risk and debt.
+- **CLI polish:** richer scan/report output.
+- **MCP Server:** first-class interface exposing scan/architecture/dependency/
+  git/finding tools.
 - **AI Reasoning Layer** (optional): explanation and prioritization on top
   of the deterministic data — never as the source of truth.
 - **Change Validation** — impact assessment for proposed changes.
 
 ## 16. Current Status Summary
 
-- Phases 1A, 1B, 1C and 1D are **complete and verified**.
-- 129 tests pass (97 previous + 32 new dependency tests);
+- Phases 1A, 1B, 1C, 1D and 1E are **complete and verified**.
+- 142 tests pass (129 previous + 13 new Git tests);
   build/typecheck/lint/format/CLI smoke all pass.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
-- **Next task:** Phase 1E, Git Analysis (not started).
+- **Next task:** Findings / Hotspots (not started).
 - **Blockers:** none.

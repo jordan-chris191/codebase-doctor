@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createScanner } from "./scanner/scanner.js";
 import { ScanError } from "./scanner/errors.js";
+import { analyzeGitRepository } from "./git/analysis.js";
+import { GitAnalysisError } from "./git/errors.js";
 import type { DiscoveryResult } from "./scanner/results.js";
 
 /**
@@ -65,7 +67,52 @@ export function buildProgram(): Command {
     .argument("[path]", "directory to scan (defaults to current working directory)")
     .action(scanCommand);
 
+  program
+    .command("git")
+    .description("Analyze the Git history of a repository and print statistics")
+    .argument("[path]", "directory to analyze (defaults to current working directory)")
+    .option("--recent <n>", "number of recent commits to show (default 10)", "10")
+    .action(async (pathValue: string | undefined, opts: { recent: string }) => {
+      const targetPath = pathValue ?? process.cwd();
+      const recentLimit = Number.parseInt(opts.recent, 10) || 10;
+      try {
+        const stats = await analyzeGitRepository(targetPath, { recentLimit });
+        printGitStats(stats);
+      } catch (err) {
+        if (err instanceof GitAnalysisError) {
+          // eslint-disable-next-line no-console
+          console.error(`Error: ${err.message}`);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
+    });
+
   return program;
+}
+
+function printGitStats(stats: Awaited<ReturnType<typeof analyzeGitRepository>>): void {
+  // eslint-disable-next-line no-console
+  console.log("Git analysis");
+  // eslint-disable-next-line no-console
+  console.log(`  commits: ${stats.totalCommits}`);
+  // eslint-disable-next-line no-console
+  console.log(`  contributors: ${stats.totalContributors}`);
+  // eslint-disable-next-line no-console
+  console.log(`  first commit: ${stats.firstCommitDate ?? "(none)"}`);
+  // eslint-disable-next-line no-console
+  console.log(`  last commit: ${stats.lastCommitDate ?? "(none)"}`);
+  if (stats.fileChurn.length > 0) {
+    const top = stats.fileChurn
+      .slice(0, 3)
+      .map((f) => `${f.path} (${f.churn})`)
+      .join(", ");
+    // eslint-disable-next-line no-console
+    console.log(`  top churn: ${top}`);
+  }
+  // eslint-disable-next-line no-console
+  console.log(`  recent: ${stats.recentActivity.length} commit(s)`);
 }
 
 // Only auto-run when this module is the entry point (i.e. invoked as the

@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-**Phase 1D — Dependency Graph**
+**Phase 1E — Git Analysis**
 
 Status: **COMPLETE** (verified)
 
@@ -11,11 +11,12 @@ Status: **COMPLETE** (verified)
 ## Current Status
 
 - Phases 1A (Foundation), 1B (Repository Discovery), 1C (TypeScript/JavaScript
-  Analysis) and 1D (Dependency Graph) are **COMPLETE** and verified.
+  Analysis), 1D (Dependency Graph) and 1E (Git Analysis) are **COMPLETE** and
+  verified.
 - The repository is a Git repository on branch `master`, pushed to
   `origin` (`https://github.com/jordan-chris191/codebase-doctor.git`).
 - No work is blocked.
-- The next phase (1E — Git Analysis) has **not** started.
+- The next phase (Future — Findings / Hotspots) has **not** started.
 
 ---
 
@@ -184,7 +185,47 @@ Phase 1D acceptance criteria (all met):
 - [x] Focused dependency tests exist (32 added; 129 total)
 - [x] Existing Phase 1A–1C tests continue to pass
 - [x] Typecheck / lint / build / format:check pass
-- [x] Phase 1E NOT started; no Git/hotspot/findings/UI scope creep
+- [x] Phase 1E NOT implemented in 1D; no Git/hotspot/findings/UI scope creep
+
+### Phase 1E — Git Analysis
+
+**Status: COMPLETE**
+
+Implemented:
+
+- **Batch Git analysis** (`src/git/`): `analyzeGitRepository(rootPath, { recentLimit? })`
+  → `RepoStats`, using Git CLI via `child_process.execFile` (no shell, Windows-safe),
+  no new dependencies.
+- **Commit statistics** — `totalCommits` (all), `firstCommitDate`/`lastCommitDate`
+  (ISO-8601 `%aI`).
+- **File churn** — `fileChurn[]` (`path`, `commitCount`, `additions`, `deletions`,
+  `churn`), aggregated from one `git log --numstat` batch (no per-file git).
+- **Contributors** — `contributors[]` (`name`, `email`, `commitCount`), grouped by
+  identity, sorted deterministically.
+- **Recent activity** — `recentActivity[]` (`hash`, `author`, `email`, `date`,
+  `subject`), newest-first, bounded by `recentLimit` (default **10**).
+- **Policies**: merges count in `totalCommits` but not file churn/contributors;
+  renames attributed to the post-rename path; binary files counted as churn with
+  zero numeric add/del; POSIX path normalization; empty repos return an
+  all-null/empty shape (not an error); non-Git dirs throw `NotAGitRepositoryError`.
+- **Errors** — `GitAnalysisError` hierarchy: `NotAGitRepositoryError`,
+  `GitUnavailableError`, `GitCommandError`, `GitOutputError`.
+- **CLI** — new `codebase-doctor git [path] [--recent N]` command.
+- **Domain** — `RepoStats` extended (additive) with `contributors`, `fileChurn`,
+  `recentActivity`; new `GitContributor`/`GitFileChurn`/`GitRecentCommit` types.
+- 13 new Git tests (`test/git/`); 142 tests total.
+
+**Verification:**
+
+- `npm run build` — PASS
+- `npm run typecheck` — PASS
+- `npm run test` — PASS (142 tests: 129 existing + 13 new)
+- `npm run lint` — PASS
+- `npm run format:check` — PASS
+- CLI smoke (`git` + `scan`) — PASS
+
+**Coverage (not verified):** `@vitest/coverage-v8` not installed (pre-existing);
+no coverage percentage claimed.
 
 ---
 
@@ -274,22 +315,19 @@ None.
 
 ## Next Task
 
-### Phase 1E — Git Analysis (NOT STARTED)
+### Findings / Hotspots (NOT STARTED)
 
-Analyze Git history over the scanned repository: commit counts, file churn,
-contributors, last-modified dates, and recent activity — using efficient
-batch `git` operations. No history analysis exists yet; the scanner only
-detects the presence of `.git`.
+Deterministic rules over the computed model (structure, complexity, Git churn)
+to surface risk and debt: large files, high-complexity hotspots, high-churn
+files, missing tests, unused dependencies, and other findings.
 
 Planned objectives:
 
-- Total commits and unique contributors
-- Earliest / latest commit dates
-- Files by churn (commit count per file)
-- Deterministic, cross-platform `git` invocation
-- Feed `RepoStats` / hotspot inputs for later phases
+- Combine Phase 1C complexity + Phase 1E churn into `Hotspot` scores
+- Deterministic `Finding` rules (`FindingCategory`)
+- No AI; rules are reproducible and testable
 
-Do NOT start Phase 1E until explicitly instructed.
+Do NOT start the Findings/Hotspots phase until explicitly instructed.
 
 ---
 
@@ -299,8 +337,8 @@ Do NOT start Phase 1E until explicitly instructed.
 2. Phase 1B — Repository Discovery — **COMPLETE**
 3. Phase 1C — TypeScript/JavaScript Analysis — **COMPLETE**
 4. Phase 1D — Dependency Graph — **COMPLETE**
-5. Phase 1E — Git Analysis — **NEXT, not started**
-6. Findings / Hotspots
+5. Phase 1E — Git Analysis — **COMPLETE**
+6. Findings / Hotspots — **NEXT, not started**
 7. CLI polish
 8. MCP Server (first-class interface)
 9. Claude Code Integration
@@ -313,6 +351,22 @@ Do NOT start Phase 1E until explicitly instructed.
 ## Session Log
 
 ## 2026-09-07
+
+- Completed Phase 1E (Git Analysis).
+- Batch Git analysis (`src/git/`): `analyzeGitRepository` → `RepoStats`;
+  commit count, first/last dates, contributors, file churn, recent activity.
+- Policies: merges in totals but not churn; renames to post-rename path;
+  binary churn counted with zero numerics; empty repo = all-null shape.
+- Errors: `NotAGitRepositoryError`, `GitUnavailableError`, `GitCommandError`,
+  `GitOutputError`. CLI added `codebase-doctor git [--recent N]`.
+- Added 13 Git tests (142 total passing); build/typecheck/lint/format PASS.
+- Coverage still unverified (`@vitest/coverage-v8` not installed — pre-existing).
+
+Next action:
+Begin the Findings/Hotspots phase when instructed. Read this file and REPORT.md
+first.
+
+## 2026-09-07 (earlier)
 
 - Completed Phase 1D (Dependency Graph).
 - Repository-aware `ts.resolveModuleName`; internal/external/unresolved

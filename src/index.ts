@@ -27,7 +27,13 @@ export type {
   FindingSeverity,
   FindingLocation,
 } from "./types/finding.js";
-export type { Hotspot, RepoStats } from "./types/stats.js";
+export type {
+  Hotspot,
+  RepoStats,
+  GitContributor,
+  GitFileChurn,
+  GitRecentCommit,
+} from "./types/stats.js";
 export type { ScanResult } from "./types/scan.js";
 export { createScanner, type Scanner, type ScannerOptions } from "./scanner/index.js";
 export {
@@ -49,3 +55,12 @@ export {
   type ResolveResult,
   type ResolutionKind,
 } from "./dependencies/index.js";
+export {
+  analyzeGitRepository,
+  GitAnalysisError,
+  NotAGitRepositoryError,
+  GitUnavailableError,
+  GitCommandError,
+  GitOutputError,
+  type GitAnalysisOptions,
+} from "./git/index.js";
